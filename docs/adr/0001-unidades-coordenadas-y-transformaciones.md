@@ -31,6 +31,18 @@ deduce automáticamente de que Three.js o Trimesh acepten una matriz 4×4.
 | Escala | MVP: tres componentes finitos y estrictamente positivos. Se admite escala no uniforme; reflexión, escala cero y shear se rechazan. |
 | Pivote | Es el origen local del STL original, inmutable. No se recentra al importar. Pivotes personalizados quedan fuera del MVP. |
 
+### Frontera JSONB
+
+Antes de persistir `geometry_jobs.payload`, Spring convierte cada número de matriz a
+binary64, rechaza valores no finitos y normaliza `-0` a `0`; después emite su decimal de
+round-trip. PostgreSQL `jsonb` conserva ese decimal como `numeric`, no la representación
+binaria ni necesariamente su texto. El worker lee el valor como decimal, lo convierte una
+sola vez a `np.float64`, vuelve a rechazar no finitos y aplica la misma normalización.
+
+Un fixture productor/consumidor atraviesa PostgreSQL real y exige igualdad bit a bit de los
+binary64 normalizados. Incluye `-0`, el subnormal positivo mínimo, el máximo finito y una
+`matrixColumnMajor` completa; demuestra la conversión, no que JSONB sea binary64.
+
 Ejemplo de identidad con traslación `(10, 20, 30)`:
 
 ```json

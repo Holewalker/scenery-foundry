@@ -28,7 +28,8 @@ options:
   requested_output_format
 ```
 
-La lista de objetos tiene orden estable (`scene_object_id` como desempate). Spring calcula
+El MVP no persiste un orden de escena independiente: Spring ordena la lista completa por
+`scene_object_id ASC` antes de serializarla. Spring calcula
 `snapshot_sha256` sobre la serialización canónica versionada
 `scenery-foundry.snapshot-jcs/v1`, que aplica **RFC 8785 (JCS)** al snapshot y guarda tanto el
 identificador del canonicalizador como el hash junto al job.

@@ -33,24 +33,26 @@ status = RUNNING
 attempt_count += 1
 claim_token = UUID aleatorio nuevo
 worker_id = identificador opaco
-lease_expires_at = statement_timestamp() + lease_duration
-started_at = COALESCE(started_at, statement_timestamp())
+lease_expires_at = clock_timestamp() + lease_duration
+started_at = COALESCE(started_at, clock_timestamp())
 ```
 
 Después confirma la transacción y procesa sin locks. Heartbeat y finalización hacen update
 condicional por `id`, `status = RUNNING` y `claim_token`; un token antiguo no puede renovar
 ni publicar estado.
 
-Claim, heartbeat, recuperación y finalización usan exactamente `statement_timestamp()` de
-PostgreSQL y comparan o calculan leases dentro de SQL; no envían
-la hora del worker. Se elige `statement_timestamp()` —inicio de la sentencia actual— en vez
-de `CURRENT_TIMESTAMP`/`transaction_timestamp()`, que quedan fijados al inicio de una
-transacción y podrían estar obsoletos en una transacción abierta durante más tiempo.
+Claim, heartbeat, recuperación y finalización usan `clock_timestamp()` dentro de SQL; no
+envían la hora del worker. Heartbeat y finalización hacen un único `UPDATE` con
+`lease_expires_at > clock_timestamp()`; recuperación exige
+`lease_expires_at <= clock_timestamp()`. PostgreSQL adquiere el row lock y vuelve a evaluar
+el predicado frente a la versión vigente, de modo que el reloj se consulta después de una
+espera. No se admite un `SELECT` seguido de un update incondicional. Cero filas en heartbeat
+significa pérdida inmediata del lease y obliga al worker a abandonar ese intento.
 
 ```sql
-lease_expires_at = statement_timestamp() + :lease_duration
+lease_expires_at = clock_timestamp() + :lease_duration
 -- elegibilidad de recuperación
-lease_expires_at <= statement_timestamp()
+lease_expires_at <= clock_timestamp()
 ```
 
 ## Valores iniciales configurables
@@ -83,8 +85,9 @@ altera el modelo de estados.
   `(owner_id, job_type, idempotency_key)`.
 - Repetir la solicitud devuelve el job existente si payload y snapshot hash coinciden; si no,
   responde conflicto.
-- El artefacto se construye bajo `/data/tmp/{job_id}/{claim_token}/` y se publica por rename
-  atómico a un path final inmutable que incluye el token, por ejemplo
+- El artefacto se construye bajo `/data/tmp/{job_id}/{claim_token}/` y se publica con la
+  operación atómica sin reemplazo de ADR-0002 a un path final inmutable que incluye el token,
+  por ejemplo
   `/data/exports/{export_id}/attempts/{claim_token}/artifact.stl`. Ningún intento escribe en
   el path de otro token ni en un nombre final compartido.
 - Tras publicar y verificar el checksum, el worker intenta seleccionar ese candidato con un
@@ -95,11 +98,11 @@ altera el modelo de estados.
      SET status = 'COMPLETED',
          output_storage_key = :immutable_key,
          output_sha256 = :sha256,
-         completed_at = statement_timestamp()
+         completed_at = clock_timestamp()
    WHERE id = :job_id
      AND status = 'RUNNING'
      AND claim_token = :claim_token
-     AND lease_expires_at > statement_timestamp();
+     AND lease_expires_at > clock_timestamp();
   ```
 
 - Una fila actualizada convierte ese path en el ganador. Cero filas significa claim vencido

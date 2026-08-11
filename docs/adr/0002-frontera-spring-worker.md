@@ -21,15 +21,23 @@ Spring y Worker --storage keys--------------> /data
 - Flyway, ejecutado por Spring, es el único migrador de esquema.
 - El worker usa una cuenta de base de datos separada con permisos mínimos sobre las tablas y
   secuencias de jobs; no lee tablas de credenciales ni decide autorización.
-- El payload contiene identificadores UUID y **storage keys relativas**, nunca paths absolutos
-  ni nombres originales proporcionados por el usuario.
+- El servidor genera identificadores UUID y **storage keys relativas**; nunca acepta una key
+  ni un nombre de archivo del cliente. Tras una única decodificación estricta se rechazan
+  paths absolutos, segmentos vacíos, `.`/`..`, separadores codificados o residuales y bytes
+  nulos. Cada key se resuelve desde un descriptor de la raíz `/data`, no por concatenación.
+  La apertura/publicación recorre componentes sin seguir symlinks (`openat2` con
+  `RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS`, o recorrido `openat` equivalente con `O_NOFOLLOW`)
+  y verifica containment antes de tocar el artefacto.
 - Spring valida ownership y congela los datos necesarios antes de crear el job.
 - El worker verifica checksums antes de procesar y cada intento escribe únicamente bajo
   `/data/tmp/{job_id}/{claim_token}/`.
-- Cada intento publica mediante rename atómico, dentro del mismo filesystem, a un destino
-  **inmutable y exclusivo del token**, por ejemplo
+- Cada intento publica, dentro del mismo filesystem, a un destino **inmutable y exclusivo
+  del token**, por ejemplo
   `/data/exports/{export_id}/attempts/{claim_token}/artifact.stl`. Nunca sobrescribe un path
-  final compartido entre intentos.
+  existente: usa `renameat2(..., RENAME_NOREPLACE)` cuando kernel y filesystem lo soportan.
+  El fallback POSIX crea el nombre mediante `linkat` del temporal en el mismo mount —que
+  falla con `EEXIST`—, hace `fsync` del fichero y directorio y solo entonces elimina el
+  temporal. No se permite degradar a `rename()` con reemplazo; una colisión de token falla.
 - PostgreSQL selecciona el artefacto vigente mediante la finalización condicional definida en
   [ADR-0005](0005-semantica-de-jobs.md). `COMPLETED` solo se confirma después de verificar el
   checksum y enlazar la storage key ganadora. Temporales y publicaciones no referenciadas se
@@ -88,3 +96,5 @@ No se elimina una columna o versión mientras existan jobs no terminales que la 
 
 - [PostgreSQL 18: `SKIP LOCKED` para consumidores de tablas tipo cola](https://www.postgresql.org/docs/18/sql-select.html)
 - [PostgreSQL 18: tipo JSON](https://www.postgresql.org/docs/18/datatype-json.html)
+- [Linux: `openat2` y resolución restringida](https://man7.org/linux/man-pages/man2/openat2.2.html)
+- [Linux: `renameat2` y `RENAME_NOREPLACE`](https://man7.org/linux/man-pages/man2/renameat2.2.html)

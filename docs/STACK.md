@@ -106,7 +106,7 @@ fixtures geométricos. Blender queda fuera hasta que un spike pruebe una necesid
 El storage MVP usa filesystem local compartido:
 
 ```text
-/data/assets
+/data/assets/{asset_uuid}/
 /data/exports/{export_id}/attempts/{claim_token}
 /data/tmp/{job_id}/{claim_token}
 ```
@@ -135,16 +135,16 @@ hasta que una nueva decisión los reemplace.
 
 - [Spring Boot 4.1 — requisitos de sistema](https://docs.spring.io/spring-boot/system-requirements.html)
 - [Spring Boot 4.1 — versiones gestionadas de JUnit y Testcontainers](https://docs.spring.io/spring-boot/appendix/dependency-versions/coordinates.html)
-- [Spring Security 7.0 — sesión, CSRF y límites de `SameSite`](https://docs.spring.io/spring-security/reference/7.0/)
+- [Spring Security 7.1 — sesión, CSRF y límites de `SameSite`](https://docs.spring.io/spring-security/reference/7.1/)
 - [Eclipse Temurin — roadmap de soporte](https://adoptium.net/support/)
 - [Apache Maven — descargas estables](https://maven.apache.org/download.cgi)
 - [Node.js 24.19.0 — versión LTS y npm incluido](https://nodejs.org/en/download/archive/v24.19.0)
 - [Node.js — líneas de release y estado LTS](https://nodejs.org/en/about/previous-releases)
 - [Vite — requisitos de Node.js](https://vite.dev/guide/)
-- Registros npm: [React](https://www.npmjs.com/package/react), [Vite](https://www.npmjs.com/package/vite), [Three.js](https://www.npmjs.com/package/three), [R3F](https://www.npmjs.com/package/@react-three/fiber), [Drei](https://www.npmjs.com/package/@react-three/drei), [Zustand](https://www.npmjs.com/package/zustand), [Vitest](https://www.npmjs.com/package/vitest) y [Playwright](https://www.npmjs.com/package/playwright)
+- Metadata npm versionada: [React 19.2.8](https://registry.npmjs.org/react/19.2.8), [Vite 8.2.1](https://registry.npmjs.org/vite/8.2.1), [Three.js 0.185.1](https://registry.npmjs.org/three/0.185.1), [R3F 9.7.0](https://registry.npmjs.org/@react-three%2Ffiber/9.7.0), [Drei 10.7.8](https://registry.npmjs.org/@react-three%2Fdrei/10.7.8), [Zustand 5.0.14](https://registry.npmjs.org/zustand/5.0.14), [Vitest 4.1.10](https://registry.npmjs.org/vitest/4.1.10) y [Playwright 1.62.1](https://registry.npmjs.org/playwright/1.62.1)
 - [Python 3.14 — novedades y estado estable](https://docs.python.org/3/whatsnew/3.14.html)
 - [uv — proyectos y lockfile](https://docs.astral.sh/uv/guides/projects/)
-- Registros PyPI: [Trimesh](https://pypi.org/project/trimesh/), [Manifold3D](https://pypi.org/project/manifold3d/), [NumPy](https://pypi.org/project/numpy/) y [pytest](https://pypi.org/project/pytest/)
+- Metadata PyPI versionada: [Trimesh 5.0.0](https://pypi.org/pypi/trimesh/5.0.0/json), [Manifold3D 3.5.2](https://pypi.org/pypi/manifold3d/3.5.2/json), [NumPy 2.5.2](https://pypi.org/pypi/numpy/2.5.2/json) y [pytest 9.1.1](https://pypi.org/pypi/pytest/9.1.1/json)
 - [PostgreSQL — política de versiones](https://www.postgresql.org/support/versioning/)
 - [Docker Engine 29 — release notes](https://docs.docker.com/engine/release-notes/29/)
 - [Docker Compose 5.4.0 — release oficial](https://github.com/docker/compose/releases/tag/v5.4.0)
@@ -152,12 +152,16 @@ hasta que una nueva decisión los reemplace.
 
 ### Límites de esta auditoría documental
 
-- Context7 expuso la referencia de Spring Security **7.0**, no la versión exacta que resolverá
-  el BOM de Spring Boot 4.1. El scaffold debe registrar el dependency tree y ejecutar los
-  tests de sesión/CSRF/cookies contra los artefactos realmente resueltos.
+- El BOM oficial de Spring Boot 4.1.0 gestiona Spring Security **7.1.0**; esa documentación es
+  autoritativa. La referencia 7.0 que expuso Context7 fue solo evidencia preliminar y no
+  sustenta el contrato final.
 - Context7 expuso documentación oficial de Manifold desde la rama principal, no un corpus
-  versionado para Manifold3D 3.5.2. El lockfile fija 3.5.2 y el scaffold debe probar su enum
-  `Error`, construcción de meshes y booleanos contra el corpus antes de aceptar el contrato.
+  versionado para Manifold3D 3.5.2. El scaffold debe fijar 3.5.2 en su lockfile y probar su
+  enum `Error`, construcción de meshes y booleanos contra el corpus antes de aceptar el contrato.
+- Este baseline precede a los scaffolds, por lo que aún no existen lockfiles ni es correcto
+  inventar sus digests. Al crear cada scaffold, `package-lock.json`/`uv.lock` deben registrar
+  las integridades o hashes resueltos y el cambio debe contrastarlos con la metadata
+  versionada anterior.
 
 ## Dependencias rechazadas por defecto en el MVP
 

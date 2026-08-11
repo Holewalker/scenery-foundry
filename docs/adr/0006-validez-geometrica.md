@@ -33,9 +33,12 @@ Un input es elegible para booleanos solo si:
 7. el volumen firmado es positivo y superior al umbral numérico;
 8. Manifold3D construye el objeto con `status() == Error.NoError`.
 
-El cargador se ejecuta con procesamiento automático deshabilitado para que la inspección no
-repare silenciosamente el original. Una normalización futura genera un derivado separado,
-con operaciones y checksum registrados.
+El cargador conserva bytes y carga con procesamiento automático deshabilitado. Sobre una
+copia de análisis construye después una topología indexada agrupando solo vértices con las
+mismas coordenadas binary64 decodificadas; el default de soldado es tolerancia cero. Los
+checks 3–8 operan sobre esa copia y registran conteos antes/después. Una tolerancia positiva
+sería una reparación, exige otra versión de política y un derivado trazable; nunca modifica
+ni sustituye el original.
 
 Manifold define manifoldness topológica exigiendo que cada arista de triángulo tenga
 exactamente una arista pareja con los vértices en orden inverso, y que los triángulos estén
@@ -51,8 +54,22 @@ Después de aplicar transforms y ejecutar Manifold3D, el resultado debe:
 - superar los checks 3–8 anteriores;
 - conservar bounds y volumen finitos;
 - exportarse, recargarse desde el STL producido y volver a superar los checks;
-- conservar bounds con error máximo
-  `max(1e-5 mm, diagonal_resultado × 1e-10)` y volumen relativo `<= 1e-8` tras reload.
+- conservar bounds y volumen frente a la referencia cuantizada descrita abajo tras reload.
+
+El STL binario almacena coordenadas `float32`. Antes de escribirlo, el worker crea una
+referencia con los mismos vértices redondeados a float32 y calcula `q`, el máximo ULP float32
+de cualquier componente finito con magnitud `max(1 mm, |coordenada|)`. Cada componente de
+`bounds_min` y `bounds_max` recargado debe diferir de esa referencia como máximo
+`max(1e-5 mm, 4q)`. La diagonal de cada AABB es
+`sqrt((max_x-min_x)^2 + (max_y-min_y)^2 + (max_z-min_z)^2)` y se registra para input,
+resultado previo y referencia cuantizada.
+
+Para volumen, `V_before`, `V_quantized` y `V_reload` son valores absolutos. Se registra el
+efecto inevitable `abs(V_quantized-V_before)/V_before`; la integridad del reload exige
+`abs(V_reload-V_quantized)/V_quantized <= max(1e-12, 64*eps64*kappa)`, donde `kappa` es la
+suma absoluta de las contribuciones tetraédricas usada para el volumen dividida por
+`V_quantized` y `eps64 = 2^-52`. Volúmenes no positivos ya fallaron antes. Así la política mide la
+cuantización esperada sin imponer a STL precisión binary64.
 
 Se permiten componentes desconectados, pero se emite `DISCONNECTED_COMPONENTS` con su
 cantidad. El producto podrá exigir una sola componente por tipo de export en una decisión
@@ -101,11 +118,19 @@ Los códigos son estables; el texto se localiza fuera del worker. `ERROR` invali
 `WARNING` conserva validez pero requiere visibilidad; `INFO` aporta métricas. Nunca se marca
 un export `COMPLETED` sin persistir el reporte final y su checksum.
 
-El reporte conserva además el valor bruto de `Manifold.status()` y lo mapea a un código
-estable propio. La auditoría documental consultada confirmó `Error.NoError` y
-`Error.Cancelled`, pero no expuso una lista exhaustiva y versionada del enum; el scaffold
-debe fijar Manifold3D 3.5.2 y generar un test de contrato contra los valores realmente
-exportados por esa versión antes de publicar el mapeo completo.
+Antes de persistir o calcular el checksum, se agregan duplicados y se ordena por
+`(severity_rank, code, JCS(details), messageKey, count)`, con
+`ERROR=0`, `WARNING=1`, `INFO=2` y orden ascendente en el resto de campos.
+
+El reporte conserva el valor bruto de `Manifold.status()` y lo mapea a un código estable.
+El scaffold fija Manifold3D 3.5.2 y su test exige exactamente estos 15 miembros exportados:
+`NoError`, `NonFiniteVertex`, `NotManifold`, `VertexOutOfBounds`, `PropertiesWrongLength`,
+`MissingPositionProperties`, `MergeVectorsDifferentLengths`, `MergeIndexOutOfBounds`,
+`TransformWrongLength`, `RunIndexWrongLength`, `FaceIDWrongLength`, `InvalidConstruction`,
+`ResultTooLarge`, `InvalidTangents` y `Cancelled`. Solo `NoError` permite continuar; cada
+valor conocido restante produce su diagnóstico y cualquier valor desconocido se mapea a
+`MANIFOLD_STATUS_UNKNOWN`/`ERROR`.
+Nunca existe un default de éxito ni puede alcanzarse `COMPLETED` con un estado desconocido.
 
 ## Consecuencias
 
@@ -127,5 +152,6 @@ exportados por esa versión antes de publicar el mapeo completo.
 
 - [Trimesh: `is_watertight`, `is_winding_consistent` e `is_volume`](https://trimesh.org/trimesh.html)
 - [Trimesh quick start y carga sin procesamiento](https://trimesh.org/quick_start.html)
-- [Manifold — repositorio y documentación oficial](https://github.com/elalish/manifold)
+- [Trimesh 5.0.0: carga y export STL binario `float32`](https://github.com/mikedh/trimesh/blob/5.0.0/trimesh/exchange/stl.py)
+- [Manifold 3.5.2 — enum `Error` exportado por Python](https://github.com/elalish/manifold/blob/v3.5.2/bindings/python/manifold3d.cpp)
 - [Manifold — requisitos topológicos e interoperabilidad](https://github.com/elalish/manifold/wiki/Manifold-Library)

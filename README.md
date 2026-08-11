@@ -77,4 +77,5 @@ Completar el spike de extremo a extremo:
 6. ejecutar una unión con Manifold3D;
 7. exportar STL y abrirlo en un slicer real.
 
-La baseline de versiones y sus fuentes oficiales están fijadas en [`docs/STACK.md`](docs/STACK.md).
+La baseline tecnológica, sus rangos aceptados y sus fuentes oficiales están documentados en
+[`docs/STACK.md`](docs/STACK.md); los lockfiles fijan la resolución exacta de cada scaffold.

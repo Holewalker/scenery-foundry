@@ -27,9 +27,14 @@ una frontera de seguridad.
 - Un recurso ajeno o inexistente responde `404` en endpoints privados. `403` se reserva para
   una acción conocida no permitida dentro de un recurso ya autorizado.
 - Descargas pasan por Spring tras la autorización; `/data` nunca es público.
-- Spring Security conserva CSRF habilitado y usa inicialmente
-  `HttpSessionCsrfTokenRepository`. La SPA obtiene y devuelve el token mediante un contrato
-  explícito que se probará en el scaffold.
+- Spring Security conserva CSRF habilitado con `HttpSessionCsrfTokenRepository`. La SPA
+  solicita `GET /api/csrf` con credenciales de mismo origen y recibe
+  `{ "token": "...", "headerName": "X-CSRF-TOKEN" }`; envía ese header y la cookie de
+  sesión en `POST`, `PUT`, `PATCH` y `DELETE`, incluidos login y logout. Tras autenticar,
+  cerrar sesión, recibir `401`/CSRF inválido o invalidarse la sesión, descarta el token y
+  obtiene uno nuevo antes de reintentar una mutación. El endpoint fuerza la materialización
+  del token diferido y nunca se cachea. `csrf.spa()` con `CookieCsrfTokenRepository` es una
+  alternativa distinta y no se mezcla con este contrato basado en sesión.
 - La cookie de sesión usa `HttpOnly`, `Secure` en producción y `SameSite=Lax`. Estos atributos
   y el ciclo de vida de la cookie se configuran en Spring Boot/contenedor servlet: Spring
   Security no crea la cookie de sesión ni controla directamente `SameSite`.
@@ -67,7 +72,7 @@ protecciones configuradas, pero no garantiza por sí mismo esas reglas de domini
 
 ## Fuentes
 
-- [Spring Security 7.0: protección CSRF](https://docs.spring.io/spring-security/reference/7.0/servlet/exploits/csrf.html)
-- [Spring Security 7.0: sesiones](https://docs.spring.io/spring-security/reference/7.0/servlet/authentication/session-management.html)
-- [Spring Security 7.0: `HttpSessionSecurityContextRepository`](https://docs.spring.io/spring-security/reference/7.0/api/java/org/springframework/security/web/context/HttpSessionSecurityContextRepository.html)
-- [Spring Security 7.0: alcance de `SameSite`](https://docs.spring.io/spring-security/reference/7.0/features/exploits/csrf.html)
+- [Spring Security 7.1: protección CSRF](https://docs.spring.io/spring-security/reference/7.1/servlet/exploits/csrf.html)
+- [Spring Security 7.1: sesiones](https://docs.spring.io/spring-security/reference/7.1/servlet/authentication/session-management.html)
+- [Spring Security 7.1: `HttpSessionSecurityContextRepository`](https://docs.spring.io/spring-security/reference/7.1/api/java/org/springframework/security/web/context/HttpSessionSecurityContextRepository.html)
+- [Spring Security 7.1: alcance de `SameSite`](https://docs.spring.io/spring-security/reference/7.1/features/exploits/csrf.html)
