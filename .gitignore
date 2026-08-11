@@ -1,0 +1,42 @@
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# Java / Gradle / Maven
+backend/build/
+backend/target/
+backend/.gradle/
+
+# Python
+geometry-worker/.venv/
+geometry-worker/venv/
+geometry-worker/__pycache__/
+geometry-worker/.pytest_cache/
+geometry-worker/.mypy_cache/
+geometry-worker/.ruff_cache/
+*.pyc
+
+# Local runtime data
+/data/
+data/
+tmp/
+
+# Logs
+*.log
+
+# Test / coverage artifacts
+coverage/
+htmlcov/
+.coverage
