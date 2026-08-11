@@ -51,6 +51,7 @@ docs/             PRD, arquitectura, stack y ADRs
 - [`docs/PRD.md`](docs/PRD.md)
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - [`docs/STACK.md`](docs/STACK.md)
+- [`docs/adr/`](docs/adr/README.md) — decisiones de arquitectura aceptadas
 
 ## Principios no negociables
 
@@ -76,4 +77,5 @@ Completar el spike de extremo a extremo:
 6. ejecutar una unión con Manifold3D;
 7. exportar STL y abrirlo en un slicer real.
 
-Las decisiones sensibles a versión se fijarán después de contrastar documentación oficial antes de generar los proyectos ejecutables.
+La baseline tecnológica, sus rangos aceptados y sus fuentes oficiales están documentados en
+[`docs/STACK.md`](docs/STACK.md); los lockfiles fijan la resolución exacta de cada scaffold.
