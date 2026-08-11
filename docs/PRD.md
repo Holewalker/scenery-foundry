@@ -1,6 +1,6 @@
 # PRD — Editor web 3D de escenarios modulares
 
-> Documento fuente inicial del proyecto. Estado: Draft v1.
+> Documento de producto. Estado: Baseline v2.
 
 El producto es una aplicación web para importar piezas STL, mantener un catálogo privado, componer escenarios tridimensionales y preparar geometría resultante para impresión 3D.
 
@@ -48,6 +48,7 @@ Jobs:
 ```text
 PENDING
 RUNNING
+RETRY_WAIT
 COMPLETED
 FAILED
 ```
@@ -100,23 +101,32 @@ geometry_jobs
 8. exportar STL;
 9. abrir STL final en un slicer real.
 
-### Fase 1 — Editor mínimo
+El spike usa fixtures o datos locales desechables; no introduce persistencia privada antes
+de completar la Fase 1.
 
-Catálogo local, Canvas, insertar, mover, rotar, snap, eliminar y guardar/cargar.
+### Fase 1 — Plataforma y seguridad
 
-### Fase 2 — Assets
+Scaffolds reproducibles, PostgreSQL/Flyway, sesión, CSRF, ownership y pruebas cruzadas con
+dos usuarios. Ningún recurso privado se persiste antes de esta baseline.
+
+### Fase 2 — Editor mínimo
+
+Catálogo con fixtures, Canvas, insertar, mover, rotar, snap, eliminar y guardar/cargar dentro
+del scope autenticado.
+
+### Fase 3 — Assets
 
 Upload, procesamiento, preview, metadata y catálogo persistente.
 
-### Fase 3 — Preparación de impresión
+### Fase 4 — Preparación de impresión
 
 Pieces Export, Print Groups, Combined Export y validación.
 
-### Fase 4 — Producto
+### Fase 5 — Producto
 
-Auth, ownership, autosave, UX, backups y despliegue VPS.
+Autosave, UX, backups, observabilidad y despliegue VPS.
 
-### Fase 5 — Mejoras
+### Fase 6 — Mejoras
 
 Multiselección, mirror, volumen de impresora, reparación avanzada, thumbnails, instancing y optimizaciones.
 
@@ -133,3 +143,4 @@ El MVP debe permitir a un usuario subir STL, componer una escena con múltiples 
 - Spring no implementa algoritmos de mesh; Python no implementa auth/dominio de usuarios.
 - Los STL originales son inmutables; previews y exports son derivados.
 - Nunca marcar un Combined Export como válido sin validación final.
+- Los contratos aceptados se mantienen en [`adr/`](adr/README.md).
