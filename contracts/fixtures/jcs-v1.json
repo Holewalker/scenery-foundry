@@ -1,0 +1,9 @@
+{
+  "contract": "scenery-foundry.snapshot-jcs/v1",
+  "input": {
+    "nested": { "z": true, "a": "é" },
+    "a": [3, 2, 1]
+  },
+  "canonical": "{\"a\":[3,2,1],\"nested\":{\"a\":\"é\",\"z\":true}}",
+  "sha256": "9b5a71073c509b0d95adb6c65c7afe70ea2ae94ca9c9fce53adde0c224b83ea5"
+}

@@ -1,0 +1,18 @@
+{
+  "contract": "scenery-foundry.transform",
+  "version": 1,
+  "cases": [
+    {
+      "name": "identity",
+      "matrixColumnMajor": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+      "point": [1.25, -2.5, 3.75],
+      "expectedPoint": [1.25, -2.5, 3.75]
+    },
+    {
+      "name": "y-rotation-scale-translation",
+      "matrixColumnMajor": [0, 0, -2, 0, 0, 3, 0, 0, 4, 0, 0, 0, 10, 20, 30, 1],
+      "point": [1, 2, 3],
+      "expectedPoint": [22, 26, 28]
+    }
+  ]
+}

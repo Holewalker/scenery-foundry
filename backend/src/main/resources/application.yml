@@ -1,0 +1,30 @@
+spring:
+  application:
+    name: scenery-foundry-backend
+  autoconfigure:
+    exclude: org.springframework.boot.security.autoconfigure.UserDetailsServiceAutoConfiguration
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/scenery_foundry}
+    username: ${DATABASE_USER:scenery}
+    password: ${DATABASE_PASSWORD:scenery-local}
+  flyway:
+    enabled: true
+  jpa:
+    hibernate:
+      ddl-auto: validate
+server:
+  servlet:
+    session:
+      cookie:
+        http-only: true
+        same-site: lax
+        secure: ${SESSION_COOKIE_SECURE:false}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
