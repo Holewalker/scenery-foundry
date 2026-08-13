@@ -40,3 +40,10 @@ tmp/
 coverage/
 htmlcov/
 .coverage
+geometry-worker/**/__pycache__/
+geometry-worker/**/*.py[cod]
+
+Thumbs.db
+
+# TypeScript incremental state
+frontend/*.tsbuildinfo

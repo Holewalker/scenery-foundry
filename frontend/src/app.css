@@ -1,0 +1,24 @@
+:root {
+  color: #e8edf2;
+  background: #172027;
+  font-family: Inter, system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+main {
+  max-width: 48rem;
+  margin: 0 auto;
+  padding: 6rem 2rem;
+}
+
+.eyebrow {
+  color: #62c6a8;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}

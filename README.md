@@ -4,7 +4,34 @@ Editor web 3D para componer escenarios modulares y preparar geometría STL para 
 
 ## Estado
 
-Proyecto en fase inicial / spike técnico.
+Bootstrap ejecutable disponible; el dominio y el spike geométrico siguen en desarrollo.
+
+## Quick path
+
+Requisitos de runtime: JDK 25, Node.js >=24.19 y Python 3.14 gestionado por uv; npm 11.17, uv 0.12.3 y Docker Compose son prerrequisitos. `package-lock.json` y `uv.lock` instalan dependencias fijadas; Java las resuelve desde `pom.xml`, el BOM y Maven Wrapper.
+
+```powershell
+Copy-Item .env.example .env
+./scripts/check.ps1
+docker compose up --build --wait
+```
+
+La SPA queda en `http://localhost:8081`, el backend en `http://localhost:8080` y su health
+check en `/actuator/health`. `docker compose down` conserva deliberadamente los volúmenes del proyecto manual; la
+prueba completa usa un proyecto efímero y elimina solo sus recursos e imágenes locales.
+
+En POSIX, usa `./scripts/check.sh`. Ambos comandos instalan las dependencias Node y Python desde sus lockfiles versionados y resuelven las dependencias Java con `pom.xml`, el BOM y Maven Wrapper; luego verifican backend, frontend, worker y la estructura Compose.
+
+El modo predeterminado es prueba completa: exige JDK 25, Node 24, Python 3.14 gestionado
+por uv y un daemon Docker; además rechaza cualquier test PostgreSQL omitido y levanta el
+stack hasta que esté healthy. Para validar solo la estructura sin afirmar evidencia runtime,
+usa `./scripts/check.ps1 -Mode quick` o `./scripts/check.sh quick`.
+
+Este Compose es un harness local: publica puertos solo en loopback y usa credenciales de
+desarrollo. Las cookies de sesión son `Secure` por defecto; el servicio `backend` de
+`compose.yml` fija `SESSION_COOKIE_SECURE=false` únicamente para HTTP local. Caddy, HTTPS y
+digests de producción se incorporarán juntos en el work unit de despliegue; reutilizar esta
+configuración directamente en Internet no es seguro.
 
 El producto se centra en:
 
@@ -78,4 +105,18 @@ Completar el spike de extremo a extremo:
 7. exportar STL y abrirlo en un slicer real.
 
 La baseline tecnológica, sus rangos aceptados y sus fuentes oficiales están documentados en
-[`docs/STACK.md`](docs/STACK.md); los lockfiles fijan la resolución exacta de cada scaffold.
+[`docs/STACK.md`](docs/STACK.md); los lockfiles de Node y Python fijan la resolución de
+sus respectivos scaffolds.
+
+## Alcance del bootstrap
+
+Ya existe evidencia ejecutable para el health check, el endpoint CSRF basado en sesión, la
+migración Flyway, el shell React, el enum de Manifold3D y el fixture compartido de matrices.
+El fixture JCS fija bytes y SHA-256, pero la canonicalización productiva Java/Python queda
+para el siguiente work unit. También quedan aplazados auth real, ownership, el schema y
+fencing de jobs, el polling PostgreSQL del worker, el pipeline STL y Caddy/HTTPS. No se
+simulan esas garantías antes de tener su dominio y sus pruebas de concurrencia.
+
+Playwright permanece como herramienta E2E elegida, pero se incorporará al lockfile con el
+primer journey real; instalarlo ahora sin una frontera verificable produciría una prueba
+vacía, no evidencia.
