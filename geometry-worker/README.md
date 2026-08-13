@@ -15,4 +15,18 @@ Responsabilidades previstas:
 
 El worker no autentica usuarios, no expone una API HTTP en el MVP y no mantiene locks de base de datos mientras procesa geometría.
 
-> El entorno Python y las versiones de Trimesh/Manifold3D se fijarán tras verificar las releases estables y completar el spike técnico.
+## Quick path
+
+```powershell
+uv sync --locked
+uv run ruff check .
+uv run pytest -q
+```
+
+uv instala CPython 3.14 según `pyproject.toml` y resuelve exclusivamente `uv.lock`. Los tests
+consumen la misma matriz que Three.js y fijan el surface del enum `manifold3d.Error` exigido
+por ADR-0006.
+
+El proceso actual es un lifecycle mínimo sin polling. Claim, lease, fencing y procesamiento
+STL se implementarán juntos cuando exista el schema de jobs; introducirlos parcialmente
+daría una falsa garantía de concurrencia.
