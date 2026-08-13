@@ -15,7 +15,7 @@ de producción se fijan por versión completa y, al desplegar, por digest.
 | Área | Baseline | Herramienta y bloqueo | Verificación |
 | --- | --- | --- | --- |
 | Backend | Eclipse Temurin JDK **25 LTS** + Spring Boot **4.1.0** | Maven Wrapper **3.9.16**; BOM de Spring Boot; `mvnw` | JUnit **6.0.3** mediante `spring-boot-starter-test`, Spring Security Test y Testcontainers **2.0.5** con PostgreSQL real |
-| Frontend | Node.js **24.19.0 LTS**, React/React DOM **19.2.8**, TypeScript **7.0.2**, Vite **8.2.1** | npm **11.17.0** y `package-lock.json` v3; `npm ci` | Vitest **4.1.10**, Testing Library React **16.3.2** y Playwright **1.62.1** |
+| Frontend | Node.js **24.19.0 LTS**, React/React DOM **19.2.8**, TypeScript **7.0.2**, Vite **8.2.1** | npm **11.17.0** y `package-lock.json` v3; `npm ci` | Vitest **4.1.10** y Testing Library React **16.3.2** actuales; Playwright planificado con el primer journey ejecutable |
 | 3D web | Three.js **0.185.1**, React Three Fiber **9.7.0**, Drei **10.7.8**, Zustand **5.0.14** | mismo `package-lock.json` del frontend | fixtures de serialización y transformación en Vitest; journeys críticos en Playwright |
 | Worker | CPython **3.14.x**, Trimesh **5.0.0**, Manifold3D **3.5.2**, NumPy **2.5.2** | uv **0.12.3**, `pyproject.toml` y `uv.lock`; `uv sync --locked` | pytest **9.1.1**; Ruff **0.16.2** para formato y lint |
 | Datos | PostgreSQL **18.4** | imagen `postgres:18.4` inicialmente; migraciones exclusivas de Flyway | Testcontainers con el mismo major; pruebas de locking, JSONB y autorización |
@@ -88,10 +88,9 @@ PostgreSQL.
 `package-lock.json` se versiona y CI instala exclusivamente con `npm ci`. No se usa el tag
 `latest` durante build o despliegue.
 
-Playwright sigue siendo la herramienta E2E aceptada, pero no se instala en el bootstrap:
-todavía no existe un journey ni una frontera UI completa que pueda probar sin una aserción
-vacía. Se añadirá al lockfile junto con el primer journey ejecutable; Vitest cubre mientras
-tanto el shell y los contratos de transformación.
+Vitest es la herramienta actual para el shell y los contratos de transformación. Playwright
+permanece planificado como herramienta E2E y se añadirá al lockfile con el primer journey
+ejecutable; instalarlo antes produciría una prueba vacía, no evidencia.
 
 ### Geometry Worker
 

@@ -37,8 +37,20 @@ printf '%s\n' "$java_version" | grep -Eq 'version "25([."]|$)' || {
   exit 1
 }
 node_version=$(node --version)
-printf '%s\n' "$node_version" | grep -Eq '^v24\.' || {
-  echo "Full verification requires Node.js 24; found: $node_version" >&2
+node_semver=${node_version#v}
+node_major=${node_semver%%.*}
+node_minor_patch=${node_semver#*.}
+node_minor=${node_minor_patch%%.*}
+node_patch=${node_minor_patch#*.}
+case "$node_version" in
+  v*.*.*) ;;
+  *) echo "Full verification requires Node.js 24.19.0 or later in major 24; found: $node_version" >&2; exit 1 ;;
+esac
+case "$node_major:$node_minor:$node_patch" in
+  *::* | *[!0-9:]* | *:*:*:*) echo "Full verification requires Node.js 24.19.0 or later in major 24; found: $node_version" >&2; exit 1 ;;
+esac
+[ "$node_major" -eq 24 ] && [ "$node_minor" -ge 19 ] || {
+  echo "Full verification requires Node.js 24.19.0 or later in major 24; found: $node_version" >&2
   exit 1
 }
 npm_version=$(npm --version)

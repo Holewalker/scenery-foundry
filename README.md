@@ -9,8 +9,8 @@ Bootstrap ejecutable disponible; el dominio y el spike geométrico siguen en des
 ## Quick path
 
 Requisitos de la baseline: JDK 25, Node.js 24.19, npm 11.17, Python 3.14 gestionado por
-uv 0.12.3 y Docker Compose. Los manifiestos conservan esas versiones; los lockfiles de
-Node y Python fijan la resolución de sus scaffolds.
+uv 0.12.3 y Docker Compose. Node y Python se instalan desde sus lockfiles versionados; Java
+se resuelve desde `pom.xml`, el BOM de Spring Boot y Maven Wrapper.
 
 ```powershell
 Copy-Item .env.example .env
@@ -22,8 +22,9 @@ La SPA queda en `http://localhost:8081`, el backend en `http://localhost:8080` y
 check en `/actuator/health`. `docker compose down` conserva deliberadamente los volúmenes del proyecto manual; la
 prueba completa usa un proyecto efímero y elimina solo sus recursos e imágenes locales.
 
-En POSIX, usa `./scripts/check.sh`. Ambos comandos instalan exclusivamente desde los
-lockfiles y verifican backend, frontend, worker y la estructura Compose.
+En POSIX, usa `./scripts/check.sh`. Ambos comandos instalan Node y Python exclusivamente
+desde los lockfiles versionados y resuelven Java con `pom.xml`, el BOM y Maven Wrapper;
+luego verifican backend, frontend, worker y la estructura Compose.
 
 El modo predeterminado es prueba completa: exige JDK 25, Node 24, Python 3.14 gestionado
 por uv y un daemon Docker; además rechaza cualquier test PostgreSQL omitido y levanta el
@@ -31,9 +32,10 @@ stack hasta que esté healthy. Para validar solo la estructura sin afirmar evide
 usa `./scripts/check.ps1 -Mode quick` o `./scripts/check.sh quick`.
 
 Este Compose es un harness local: publica puertos solo en loopback y usa credenciales de
-desarrollo. Caddy, HTTPS, cookies `Secure` y digests de producción se incorporarán juntos
-en el work unit de despliegue; reutilizar esta configuración directamente en Internet no
-es seguro.
+desarrollo. Las cookies de sesión son `Secure` por defecto; el servicio `backend` de
+`compose.yml` fija `SESSION_COOKIE_SECURE=false` únicamente para HTTP local. Caddy, HTTPS y
+digests de producción se incorporarán juntos en el work unit de despliegue; reutilizar esta
+configuración directamente en Internet no es seguro.
 
 El producto se centra en:
 

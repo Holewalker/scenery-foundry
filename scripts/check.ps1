@@ -26,8 +26,13 @@ function Assert-FullToolchain {
     }
 
     $nodeVersion = (& node --version).Trim()
-    if ($nodeVersion -notmatch '^v24\.') {
-        throw "Full verification requires Node.js 24; found: $nodeVersion"
+    if ($nodeVersion -notmatch '^v(?<major>\d+)\.(?<minor>\d+)\.(?<patch>\d+)$') {
+        throw "Full verification requires Node.js 24.19.0 or later in major 24; found: $nodeVersion"
+    }
+    $nodeMajor = [int]$Matches['major']
+    $nodeMinor = [int]$Matches['minor']
+    if ($nodeMajor -ne 24 -or $nodeMinor -lt 19) {
+        throw "Full verification requires Node.js 24.19.0 or later in major 24; found: $nodeVersion"
     }
 
     $npmVersion = (& npm --version).Trim()
