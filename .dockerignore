@@ -1,0 +1,12 @@
+.git
+.atl
+.codegraph
+.env
+docs
+frontend
+geometry-worker
+scripts
+backend/target
+backend/.idea
+data
+tmp
