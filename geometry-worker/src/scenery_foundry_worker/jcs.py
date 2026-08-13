@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import rfc8785
 
 CONTRACT = "scenery-foundry.snapshot-jcs/v1"
+MAX_CONTAINER_DEPTH = 500
 
 
 class CanonicalizationError(ValueError):
@@ -39,12 +40,20 @@ def canonicalize(raw_utf8: bytes) -> CanonicalResult:
         )
     except CanonicalizationError:
         raise
+    except RecursionError as error:
+        raise CanonicalizationError("INVALID_JSON") from error
     except (json.JSONDecodeError, ValueError) as error:
         raise CanonicalizationError("INVALID_JSON") from error
 
-    _validate_unicode(value)
+    try:
+        _validate_unicode(value)
+    except RecursionError as error:
+        raise CanonicalizationError("INVALID_JSON") from error
+
     try:
         canonical_bytes = rfc8785.dumps(value)
+    except RecursionError as error:
+        raise CanonicalizationError("INVALID_JSON") from error
     except (TypeError, ValueError) as error:
         raise CanonicalizationError("CANONICALIZATION_FAILED") from error
     return CanonicalResult(CONTRACT, canonical_bytes, hashlib.sha256(canonical_bytes).hexdigest())
@@ -71,13 +80,21 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 
 def _validate_unicode(value: object) -> None:
-    if isinstance(value, str):
-        if any(0xD800 <= ord(character) <= 0xDFFF for character in value):
-            raise CanonicalizationError("INVALID_UNICODE")
-    elif isinstance(value, list):
-        for item in value:
-            _validate_unicode(item)
-    elif isinstance(value, dict):
-        for key, item in value.items():
-            _validate_unicode(key)
-            _validate_unicode(item)
+    pending = [(value, 0)]
+    while pending:
+        current, depth = pending.pop()
+        if isinstance(current, str):
+            if any(0xD800 <= ord(character) <= 0xDFFF for character in current):
+                raise CanonicalizationError("INVALID_UNICODE")
+        elif isinstance(current, list):
+            container_depth = depth + 1
+            if container_depth > MAX_CONTAINER_DEPTH:
+                raise CanonicalizationError("INVALID_JSON")
+            pending.extend((item, container_depth) for item in current)
+        elif isinstance(current, dict):
+            container_depth = depth + 1
+            if container_depth > MAX_CONTAINER_DEPTH:
+                raise CanonicalizationError("INVALID_JSON")
+            for key, item in current.items():
+                pending.append((key, container_depth))
+                pending.append((item, container_depth))

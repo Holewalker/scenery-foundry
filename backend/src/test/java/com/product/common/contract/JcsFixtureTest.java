@@ -44,6 +44,27 @@ class JcsFixtureTest {
         }
     }
 
+    @Test
+    void acceptsMaximumContainerDepth() {
+        byte[] rawJson = nestedArray(500);
+
+        SnapshotJcsCanonicalizer.CanonicalResult result = new SnapshotJcsCanonicalizer().canonicalize(rawJson);
+
+        assertThat(result.canonicalBytes()).isEqualTo(rawJson);
+    }
+
+    @Test
+    void rejectsContainerDepthAboveMaximum() {
+        assertThatThrownBy(() -> new SnapshotJcsCanonicalizer().canonicalize(nestedArray(501)))
+            .isInstanceOf(SnapshotJcsCanonicalizer.CanonicalizationException.class)
+            .extracting(error -> ((SnapshotJcsCanonicalizer.CanonicalizationException) error).code())
+            .isEqualTo("INVALID_JSON");
+    }
+
+    private byte[] nestedArray(int depth) {
+        return ("[".repeat(depth) + "0" + "]".repeat(depth)).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+    }
+
     private JsonNode fixture() throws Exception {
         try (InputStream stream = getClass().getResourceAsStream("/contracts/fixtures/jcs-v1.json")) {
             assertThat(stream).isNotNull();
