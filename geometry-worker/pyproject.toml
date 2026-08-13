@@ -1,0 +1,37 @@
+[project]
+name = "scenery-foundry-geometry-worker"
+version = "0.0.1"
+description = "Geometry processing worker for Scenery Foundry"
+requires-python = ">=3.14,<3.15"
+dependencies = [
+  "manifold3d==3.5.2",
+  "numpy==2.5.2",
+  "psycopg[binary]==3.3.2",
+  "trimesh==5.0.0",
+]
+
+[dependency-groups]
+dev = [
+  "pytest==9.1.1",
+  "ruff==0.16.2",
+]
+
+[project.scripts]
+geometry-worker = "scenery_foundry_worker.main:main"
+
+[build-system]
+requires = ["hatchling==1.28.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/scenery_foundry_worker"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

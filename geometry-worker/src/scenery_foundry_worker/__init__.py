@@ -1,0 +1,1 @@
+"""Scenery Foundry geometry worker."""

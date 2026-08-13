@@ -53,7 +53,7 @@ spring-boot-starter-validation
 spring-boot-starter-data-jpa
 spring-boot-starter-actuator
 postgresql JDBC driver
-flyway-core
+spring-boot-starter-flyway
 flyway-database-postgresql
 ```
 
@@ -87,6 +87,11 @@ PostgreSQL.
 `package.json` expresa rangos compatibles dentro del major/minor aceptado; el
 `package-lock.json` se versiona y CI instala exclusivamente con `npm ci`. No se usa el tag
 `latest` durante build o despliegue.
+
+Playwright sigue siendo la herramienta E2E aceptada, pero no se instala en el bootstrap:
+todavía no existe un journey ni una frontera UI completa que pueda probar sin una aserción
+vacía. Se añadirá al lockfile junto con el primer journey ejecutable; Vitest cubre mientras
+tanto el shell y los contratos de transformación.
 
 ### Geometry Worker
 
