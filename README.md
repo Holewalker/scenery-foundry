@@ -8,9 +8,7 @@ Bootstrap ejecutable disponible; el dominio y el spike geométrico siguen en des
 
 ## Quick path
 
-Requisitos de la baseline: JDK 25, Node.js 24.19, npm 11.17, Python 3.14 gestionado por
-uv 0.12.3 y Docker Compose. Node y Python se instalan desde sus lockfiles versionados; Java
-se resuelve desde `pom.xml`, el BOM de Spring Boot y Maven Wrapper.
+Requisitos de runtime: JDK 25, Node.js >=24.19 y Python 3.14 gestionado por uv; npm 11.17, uv 0.12.3 y Docker Compose son prerrequisitos. `package-lock.json` y `uv.lock` instalan dependencias fijadas; Java las resuelve desde `pom.xml`, el BOM y Maven Wrapper.
 
 ```powershell
 Copy-Item .env.example .env
@@ -22,9 +20,7 @@ La SPA queda en `http://localhost:8081`, el backend en `http://localhost:8080` y
 check en `/actuator/health`. `docker compose down` conserva deliberadamente los volúmenes del proyecto manual; la
 prueba completa usa un proyecto efímero y elimina solo sus recursos e imágenes locales.
 
-En POSIX, usa `./scripts/check.sh`. Ambos comandos instalan Node y Python exclusivamente
-desde los lockfiles versionados y resuelven Java con `pom.xml`, el BOM y Maven Wrapper;
-luego verifican backend, frontend, worker y la estructura Compose.
+En POSIX, usa `./scripts/check.sh`. Ambos comandos instalan las dependencias Node y Python desde sus lockfiles versionados y resuelven las dependencias Java con `pom.xml`, el BOM y Maven Wrapper; luego verifican backend, frontend, worker y la estructura Compose.
 
 El modo predeterminado es prueba completa: exige JDK 25, Node 24, Python 3.14 gestionado
 por uv y un daemon Docker; además rechaza cualquier test PostgreSQL omitido y levanta el

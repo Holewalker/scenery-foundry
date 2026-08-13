@@ -86,6 +86,17 @@ grep -Eq '<testsuite[^>]*tests="[1-9][0-9]*"' "$report" &&
   echo "PlatformMigrationIntegrationTest requires executed tests with zero errors, failures, and skips." >&2
   exit 1
 }
+set -- "$repo/backend/target/surefire-reports"/TEST-*.xml
+[ -f "$1" ] || { echo "Missing Surefire test reports." >&2; exit 1; }
+for report in "$@"; do
+  grep -Eq '<testsuite[^>]*tests="[1-9][0-9]*"' "$report" &&
+    grep -Eq '<testsuite[^>]*errors="0"' "$report" &&
+    grep -Eq '<testsuite[^>]*failures="0"' "$report" &&
+    grep -Eq '<testsuite[^>]*skipped="0"' "$report" || {
+    echo "Surefire report $report requires executed tests with zero errors, failures, and skips." >&2
+    exit 1
+  }
+done
 ( cd "$repo/frontend" && npm ci && npm test && npm run build; )
 ( cd "$repo/geometry-worker" && uv sync --locked && uv run ruff check . && uv run ruff format --check . && uv run pytest -q; )
 

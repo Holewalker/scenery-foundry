@@ -87,6 +87,7 @@ if ($Mode -eq "quick") {
 
 $project = "scenery-foundry-check-$PID-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
 $compose = @("compose", "--project-name", $project)
+$verificationError = $cleanupExitCode = $null
 try {
     Assert-FullToolchain
     Remove-RepoOutput "backend/target"
@@ -105,6 +106,14 @@ try {
         $suite = $report.testsuite
         if ([int]$suite.tests -lt 1 -or [int]$suite.errors -ne 0 -or [int]$suite.failures -ne 0 -or [int]$suite.skipped -ne 0) {
             throw "PlatformMigrationIntegrationTest requires executed tests with zero errors, failures, and skips."
+        }
+        $reports = Get-ChildItem -LiteralPath "target/surefire-reports" -Filter "TEST-*.xml" -File
+        if ($reports.Count -eq 0) { throw "Missing Surefire test reports." }
+        foreach ($reportFile in $reports) {
+            [xml]$report = Get-Content -Raw -LiteralPath $reportFile; $suite = $report.testsuite
+            if ([int]$suite.tests -lt 1 -or [int]$suite.errors -ne 0 -or [int]$suite.failures -ne 0 -or [int]$suite.skipped -ne 0) {
+                throw "Surefire report '$($reportFile.Name)' requires executed tests with zero errors, failures, and skips."
+            }
         }
     } finally {
         Pop-Location
@@ -146,14 +155,16 @@ try {
     } finally {
         Pop-Location
     }
+} catch {
+    $verificationError = $_
 } finally {
     Push-Location $repo
     try {
         & docker @compose down --rmi local --volumes --remove-orphans
-        if ($LASTEXITCODE -ne 0) {
-            Write-Warning "Compose cleanup did not complete successfully."
-        }
+        $cleanupExitCode = $LASTEXITCODE
     } finally {
         Pop-Location
     }
 }
+if ($null -ne $verificationError) { throw $verificationError }
+if ($cleanupExitCode -ne 0) { throw "Compose cleanup did not complete successfully." }
