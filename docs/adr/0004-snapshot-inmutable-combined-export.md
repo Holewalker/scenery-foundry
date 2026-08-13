@@ -36,9 +36,11 @@ identificador del canonicalizador como el hash junto al job.
 
 ### Canonicalización `scenery-foundry.snapshot-jcs/v1`
 
-1. El modelo de entrada se restringe al dominio JSON de I-JSON: strings Unicode válidos,
-   booleanos, `null` y números finitos representables por IEEE-754 binary64. `NaN`, infinito,
-   claves duplicadas y datos Unicode inválidos se rechazan antes del hash.
+1. La implementación actual recibe únicamente bytes UTF-8 de JSON sin procesar y los transforma
+   en bytes UTF-8 RFC 8785 antes del hash. El límite público v1 no acepta modelos, diccionarios,
+   strings de conveniencia ni constructores numéricos. Se restringe al dominio I-JSON: strings
+   Unicode válidos, booleanos, `null` y números finitos representables por IEEE-754 binary64.
+   `NaN`, infinito, claves duplicadas y datos Unicode inválidos se rechazan antes del hash.
 2. JCS serializa números y escapes de strings según ECMAScript, sin whitespace opcional.
    No se redondean, formatean ni convierten números mediante reglas propias.
 3. Las propiedades de **cada** objeto se ordenan lexicográficamente por sus unidades de
@@ -51,6 +53,10 @@ identificador del canonicalizador como el hash junto al job.
 Cambiar cualquiera de estas reglas exige un identificador de canonicalizador nuevo. Un
 fixture común Java/Python contiene casos con claves anidadas, caracteres no ASCII, escapes,
 números límite y arrays ordenados, más el byte stream y SHA-256 esperados.
+
+La conversión de un snapshot de dominio a ese JSON, así como la persistencia de snapshots,
+schema, fencing, polling, ownership y autenticación, permanece aplazada. Esta entrega solo
+implementa validación, canonicalización y digest en el límite de bytes crudos.
 
 ## Contrato firme
 

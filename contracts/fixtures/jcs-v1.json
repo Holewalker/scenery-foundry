@@ -1,9 +1,125 @@
 {
   "contract": "scenery-foundry.snapshot-jcs/v1",
-  "input": {
-    "nested": { "z": true, "a": "é" },
-    "a": [3, 2, 1]
-  },
-  "canonical": "{\"a\":[3,2,1],\"nested\":{\"a\":\"é\",\"z\":true}}",
-  "sha256": "9b5a71073c509b0d95adb6c65c7afe70ea2ae94ca9c9fce53adde0c224b83ea5"
+  "validCases": [
+    {
+      "name": "nested-ordering",
+      "rawUtf8Hex": "7b226e6573746564223a7b227a223a747275652c2261223a225c7530306539227d2c2261223a5b332c322c315d7d",
+      "canonicalUtf8Hex": "7b2261223a5b332c322c315d2c226e6573746564223a7b2261223a22c3a9222c227a223a747275657d7d",
+      "sha256": "9b5a71073c509b0d95adb6c65c7afe70ea2ae94ca9c9fce53adde0c224b83ea5"
+    },
+    {
+      "name": "escapes-and-unicode",
+      "rawUtf8Hex": "7b22636f6e74726f6c223a225c625c745c6e5c665c725c225c5c222c226e6663223a225c7530306539222c226e6664223a22655c7530333031227d",
+      "canonicalUtf8Hex": "7b22636f6e74726f6c223a225c625c745c6e5c665c725c225c5c222c226e6663223a22c3a9222c226e6664223a2265cc81227d",
+      "sha256": "b376a6b0772fbdfe291a663d1ea2e22559529d6f2d48281d870598d0c5a00dbd"
+    },
+    {
+      "name": "utf16-ordering",
+      "rawUtf8Hex": "7b225c75643833645c7564653030223a22737570706c656d656e74617279222c225c7565303030223a22626d70222c2261223a7b227a223a302c2261223a317d7d",
+      "canonicalUtf8Hex": "7b2261223a7b2261223a312c227a223a307d2c22f09f9880223a22737570706c656d656e74617279222c22ee8080223a22626d70227d",
+      "sha256": "d70e2ac020515058176c07ff80f0abbb1fa133a95e5c8a9297e4f6e87d7f41f0"
+    },
+    {
+      "name": "number-0.1",
+      "rawUtf8Hex": "7b2276616c7565223a302e317d",
+      "canonicalUtf8Hex": "7b2276616c7565223a302e317d",
+      "sha256": "097a678e9d1339735cc744964f1c2b1271b2e650d7c59c72d2ff1c93064ceb6e"
+    },
+    {
+      "name": "negative-zero",
+      "rawUtf8Hex": "7b2276616c7565223a2d302e307d",
+      "canonicalUtf8Hex": "7b2276616c7565223a307d",
+      "sha256": "23d7b286bd429460b92a2a1c21b6afc34110446c5034c17363fda363aa0a7c5d"
+    },
+    {
+      "name": "rfc-boundary",
+      "rawUtf8Hex": "7b22736d616c6c223a35652d3332342c226c61726765223a312e37393736393331333438363233313537653330382c22726f756e64223a3333333333333333332e33333333333332397d",
+      "canonicalUtf8Hex": "7b226c61726765223a312e37393736393331333438363233313537652b3330382c22726f756e64223a3333333333333333332e333333333333332c22736d616c6c223a35652d3332347d",
+      "sha256": "51868c2a3afcafdbae23588878d61c5c7d4d32a5355b62348031651bba01578d"
+    },
+    {
+      "name": "array-order-first",
+      "rawUtf8Hex": "7b226974656d73223a5b312c322c335d7d",
+      "canonicalUtf8Hex": "7b226974656d73223a5b312c322c335d7d",
+      "sha256": "7aff5dcbe562761bfd9d8569cdd3226d3944acad6539db5d62ad3f67d9a45d0a"
+    },
+    {
+      "name": "array-order-second",
+      "rawUtf8Hex": "7b226974656d73223a5b332c322c315d7d",
+      "canonicalUtf8Hex": "7b226974656d73223a5b332c322c315d7d",
+      "sha256": "27d87096a02d69dbce3514d6528cf8384ded1e55bd4dac03e5daf2f40b72586d"
+    },
+    {
+      "name": "integer-rounding",
+      "rawUtf8Hex": "7b2273616665223a393030373139393235343734303939322c22726f756e646564223a393030373139393235343734303939337d",
+      "canonicalUtf8Hex": "7b22726f756e646564223a393030373139393235343734303939322c2273616665223a393030373139393235343734303939327d",
+      "sha256": "0c8797b3313b8a99c8499e499a7553beeed540c92f7a9476b31f542c0a81ea71"
+    },
+    {
+      "name": "underflow-to-zero",
+      "rawUtf8Hex": "7b2276616c7565223a31652d31303030307d",
+      "canonicalUtf8Hex": "7b2276616c7565223a307d",
+      "sha256": "23d7b286bd429460b92a2a1c21b6afc34110446c5034c17363fda363aa0a7c5d"
+    },
+    {
+      "name": "valid-null",
+      "rawUtf8Hex": "7b2276616c7565223a6e756c6c7d",
+      "canonicalUtf8Hex": "7b2276616c7565223a6e756c6c7d",
+      "sha256": "1c197daef20de3f47eec5e2f735ec6669869d3180cc29f35be4788511e0af0f8"
+    },
+    {
+      "name": "object-order-forward",
+      "rawUtf8Hex": "7b227a223a322c2261223a317d",
+      "canonicalUtf8Hex": "7b2261223a312c227a223a327d",
+      "sha256": "99168216144c7fed5d4c54916cf98d9c66096280c04a499822a99b6658bd177a"
+    },
+    {
+      "name": "object-order-reversed",
+      "rawUtf8Hex": "7b2261223a312c227a223a327d",
+      "canonicalUtf8Hex": "7b2261223a312c227a223a327d",
+      "sha256": "99168216144c7fed5d4c54916cf98d9c66096280c04a499822a99b6658bd177a"
+    }
+  ],
+  "invalidCases": [
+    {
+      "name": "malformed-utf8",
+      "rawUtf8Hex": "7b2278223a22ff227d",
+      "error": "INVALID_UTF8"
+    },
+    {
+      "name": "duplicate-after-null",
+      "rawUtf8Hex": "7b2278223a6e756c6c2c2278223a317d",
+      "error": "DUPLICATE_NAME"
+    },
+    {
+      "name": "lone-surrogate-value",
+      "rawUtf8Hex": "7b2278223a225c7564383030227d",
+      "error": "INVALID_UNICODE"
+    },
+    {
+      "name": "lone-surrogate-name",
+      "rawUtf8Hex": "7b225c7564383030223a317d",
+      "error": "INVALID_UNICODE"
+    },
+    {
+      "name": "nan-token",
+      "rawUtf8Hex": "7b2278223a4e614e7d",
+      "error": "INVALID_JSON"
+    },
+    {
+      "name": "infinity-token",
+      "rawUtf8Hex": "7b2278223a496e66696e6974797d",
+      "error": "INVALID_JSON"
+    },
+    {
+      "name": "negative-infinity-token",
+      "rawUtf8Hex": "7b2278223a2d496e66696e6974797d",
+      "error": "INVALID_JSON"
+    },
+    {
+      "name": "overflow",
+      "rawUtf8Hex": "7b2278223a31653430307d",
+      "error": "NUMBER_OUT_OF_RANGE"
+    }
+  ]
 }
