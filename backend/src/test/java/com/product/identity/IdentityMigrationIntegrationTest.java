@@ -23,9 +23,9 @@ class IdentityMigrationIntegrationTest {
 
     @Test
     void flywayCreatesConstrainedIdentityTable() {
-        Integer uniqueEmail = jdbcClient.sql("select count(*) from pg_constraint where conname = 'users_email_key'")
-            .query(Integer.class).single();
+        var constraints = jdbcClient.sql("select conname from pg_constraint where conname in ('users_pkey', 'users_email_key', 'users_password_hash_check')")
+            .query(String.class).list();
 
-        assertThat(uniqueEmail).isEqualTo(1);
+        assertThat(constraints).containsExactlyInAnyOrder("users_pkey", "users_email_key", "users_password_hash_check");
     }
 }

@@ -19,8 +19,9 @@ class AuthenticatedUserTest {
 
     @Test
     void rejectsForeignPrincipalTypes() {
-        var authentication = new UsernamePasswordAuthenticationToken("owner@example.com", null);
+        var authentication = new UsernamePasswordAuthenticationToken("owner@example.com", null, java.util.List.of());
 
+        assertThat(authentication.isAuthenticated()).isTrue();
         assertThatThrownBy(() -> AuthenticatedUser.from(authentication))
             .isInstanceOf(IllegalStateException.class);
     }
