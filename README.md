@@ -120,3 +120,4 @@ simulan esas garantías antes de tener su dominio y sus pruebas de concurrencia.
 Playwright permanece como herramienta E2E elegida, pero se incorporará al lockfile con el
 primer journey real; instalarlo ahora sin una frontera verificable produciría una prueba
 vacía, no evidencia.
+
