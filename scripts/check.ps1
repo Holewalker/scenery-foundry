@@ -6,6 +6,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repo = (Resolve-Path (Split-Path -Parent $PSScriptRoot)).Path
+. "$PSScriptRoot/check-toolchain.ps1"
 
 function Assert-Command([string]$Name) {
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
@@ -47,12 +48,14 @@ function Assert-FullToolchain {
 
     Push-Location "$repo/geometry-worker"
     try {
-        $pythonVersion = (& uv run --locked python --version 2>&1 | Select-Object -First 1)
+        $pythonOutput = @(& uv run --locked python --version 2>&1)
+        $pythonExitCode = $LASTEXITCODE
     } finally {
         Pop-Location
     }
-    if ($pythonVersion -notmatch '^Python 3\.14\.') {
-        throw "Full verification requires the locked Python 3.14 runtime; found: $pythonVersion"
+    $pythonVersion = Get-PythonVersionLine $pythonOutput
+    if ($pythonExitCode -ne 0 -or $null -eq $pythonVersion) {
+        throw "Full verification requires the locked Python 3.14 runtime; uv exit=$pythonExitCode; output: $($pythonOutput -join ' | ')"
     }
 
     & docker info *> $null
