@@ -63,9 +63,13 @@ printf '%s\n' "$uv_version" | grep -Eq '^uv 0\.12\.3([[:space:]]|$)' || {
   echo "Full verification requires uv 0.12.3; found: $uv_version" >&2
   exit 1
 }
-python_version=$( cd "$repo/geometry-worker" && uv run --locked python --version)
+if ! python_output=$( cd "$repo/geometry-worker" && uv run --locked python --version 2>&1); then
+  echo "Full verification requires the locked Python 3.14 runtime; uv command failed: $python_output" >&2
+  exit 1
+fi
+python_version=$(printf '%s\n' "$python_output" | grep -E '^Python 3\.14\.' | sed -n '1p' || true)
 printf '%s\n' "$python_version" | grep -Eq '^Python 3\.14\.' || {
-  echo "Full verification requires the locked Python 3.14 runtime; found: $python_version" >&2
+  echo "Full verification requires the locked Python 3.14 runtime; output: $python_output" >&2
   exit 1
 }
 docker info >/dev/null 2>&1 || {
