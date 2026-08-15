@@ -8,6 +8,16 @@ describe('vite dev server /api proxy', () => {
     expect(proxy).not.toHaveProperty('rewrite')
   })
 
+  it('validates TLS certificates by default so a spoofed HTTPS backend origin is rejected', () => {
+    const proxy = createApiProxy({ backendOrigin: 'https://backend.internal' })
+    expect(proxy.secure).toBe(true)
+  })
+
+  it('only disables TLS validation when explicitly opted in for a documented local case', () => {
+    const proxy = createApiProxy({ backendOrigin: 'https://localhost:8443', allowInsecureTls: true })
+    expect(proxy.secure).toBe(false)
+  })
+
   it('never rewrites cookie headers so session and CSRF cookies pass through untouched', () => {
     const proxy = createApiProxy()
     expect(proxy).not.toHaveProperty('cookieDomainRewrite')
