@@ -26,6 +26,7 @@ export function App() {
   const setSaving = useEditorStore((state) => state.setLoading)
   const saveError = useEditorStore((state) => state.error)
   const setSaveError = useEditorStore((state) => state.setError)
+  const dirty = useEditorStore((state) => state.dirty)
 
   async function handleSave() {
     if (!projectId || saving) return
@@ -93,11 +94,23 @@ export function App() {
     )
   }
 
+  const saveStateLabel = saveError ? 'Save failed' : saving ? 'Saving…' : dirty ? 'Unsaved changes' : 'Saved'
+
   return (
     <div className="editor-shell">
-      <AssetCatalog assets={assets} />
-      <EditorCanvas projectId={projectId} />
-      <div className="editor-toolbar">
+      <header className="app-bar">
+        <h1>Scenery Foundry</h1>
+        <p className="save-state" role="status">
+          {saveStateLabel}
+        </p>
+      </header>
+      <aside className="panel">
+        <AssetCatalog assets={assets} />
+      </aside>
+      <section className="viewport">
+        <EditorCanvas projectId={projectId} />
+      </section>
+      <footer className="editor-toolbar">
         <button type="button" aria-pressed={mode === 'translate'} onClick={() => setMode('translate')}>
           Move
         </button>
@@ -107,7 +120,7 @@ export function App() {
         <button type="button" onClick={handleSave} disabled={saving}>
           {saving ? 'Saving…' : 'Save'}
         </button>
-      </div>
+      </footer>
       {(error ?? saveError) && <p role="alert">{error ?? saveError}</p>}
     </div>
   )
