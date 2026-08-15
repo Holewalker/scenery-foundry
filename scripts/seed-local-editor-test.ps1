@@ -33,6 +33,11 @@ try {
     Assert-Throws -Action {
         Resolve-SeedAssetPath -RelativePath "seed/fixture.stl" -DataRoot $testRoot -ReparsePointChecker { param($Path) $true }
     } -Message "Symlinked seed path must be rejected"
+    Assert-Throws -Action {
+        Resolve-SeedAssetPath -RelativePath "seed/fixture.stl" -DataRoot $testRoot -ReparsePointChecker {
+            param($Path) $Path -eq (Join-Path $testRoot "seed")
+        }
+    } -Message "Symlinked ancestor directory must be rejected even when the final file itself is not a symlink"
 
     Assert-Throws -Action {
         Assert-SeedOwnership -UserId ([guid]::NewGuid()) -ProjectId ([guid]::NewGuid()) `
@@ -49,6 +54,16 @@ try {
 
     Assert-SeedOwnership -UserId $ownerId -ProjectId $projectId `
         -UserExistsLookup { param($id) $true } -ProjectOwnerLookup { param($id) $ownerId }
+
+    Assert-Throws -Action {
+        Confirm-SeedAssetInserted -InsertedId "" -AssetId ([guid]::NewGuid())
+    } -Message "Cross-project asset id conflict (no row returned) must be rejected"
+    Assert-Throws -Action {
+        Confirm-SeedAssetInserted -InsertedId $null -AssetId ([guid]::NewGuid())
+    } -Message "Missing insert result must be rejected"
+    $confirmedId = [guid]::NewGuid().ToString()
+    Assert-Equal -Actual (Confirm-SeedAssetInserted -InsertedId $confirmedId -AssetId $confirmedId) -Expected $confirmedId `
+        -Message "A returned id must confirm the seed insert succeeded"
 } finally {
     Remove-Item -LiteralPath $testRoot -Recurse -Force -ErrorAction SilentlyContinue
 }

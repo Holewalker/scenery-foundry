@@ -31,9 +31,24 @@ function Resolve-SeedAssetPath {
 
     $checker = $ReparsePointChecker
     if (-not $checker) { $checker = { param($Path) ((Get-Item -LiteralPath $Path -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 } }
-    if (& $checker $candidateFull) { throw "Seed asset path is a symlink, which is not permitted: $RelativePath" }
+    foreach ($componentPath in (Get-SeedPathComponents -RootFull $rootFull -CandidateFull $candidateFull)) {
+        if (& $checker $componentPath) { throw "Seed asset path is a symlink, which is not permitted: $RelativePath" }
+    }
 
     [pscustomobject]@{ StorageKey = ($RelativePath -replace '\\', '/'); AbsolutePath = $candidateFull }
+}
+
+function Get-SeedPathComponents([Parameter(Mandatory)][string]$RootFull, [Parameter(Mandatory)][string]$CandidateFull) {
+    $rootTrimmed = $RootFull.TrimEnd([System.IO.Path]::DirectorySeparatorChar)
+    $relative = $CandidateFull.Substring($rootTrimmed.Length + 1)
+    $segments = $relative.Split([System.IO.Path]::DirectorySeparatorChar)
+    $current = $rootTrimmed
+    $components = @()
+    foreach ($segment in $segments) {
+        $current = Join-Path $current $segment
+        $components += $current
+    }
+    return $components
 }
 
 function Get-SeedAssetSha256([Parameter(Mandatory)][string]$AbsolutePath) {
@@ -60,6 +75,13 @@ function Invoke-SeedPsql([string]$ComposeProjectName, [string]$Sql) {
     return ($output | Select-Object -First 1)
 }
 
+function Confirm-SeedAssetInserted([string]$InsertedId, [string]$AssetId) {
+    if ([string]::IsNullOrWhiteSpace($InsertedId)) {
+        throw "Seed asset id already exists under a different project: $AssetId"
+    }
+    return $InsertedId
+}
+
 if ($MyInvocation.InvocationName -ne '.') {
     if (-not $RelativePath -or -not $UserId -or -not $ProjectId -or -not $AssetId) {
         throw "RelativePath, UserId, ProjectId, and AssetId are required to seed a local editor fixture."
@@ -69,8 +91,11 @@ if ($MyInvocation.InvocationName -ne '.') {
     Assert-SeedOwnership -UserId $UserId -ProjectId $ProjectId `
         -UserExistsLookup { param($id) [bool](Invoke-SeedPsql $ComposeProjectName "select 1 from users where id='$id'") } `
         -ProjectOwnerLookup { param($id) Invoke-SeedPsql $ComposeProjectName "select owner_id from projects where id='$id'" }
-    Invoke-SeedPsql $ComposeProjectName ("insert into prepared_assets(id,project_id,processing_status,geometry_status,storage_key,original_sha256) values " +
+    $insertedId = Invoke-SeedPsql $ComposeProjectName ("insert into prepared_assets(id,project_id,processing_status,geometry_status,storage_key,original_sha256) values " +
         "('$AssetId','$ProjectId','READY','VALID_VOLUME','$($resolved.StorageKey)','$sha') " +
-        "on conflict (id) do update set storage_key=excluded.storage_key, original_sha256=excluded.original_sha256") | Out-Null
+        "on conflict (id) do update set storage_key=excluded.storage_key, original_sha256=excluded.original_sha256 " +
+        "where prepared_assets.project_id = excluded.project_id " +
+        "returning id")
+    Confirm-SeedAssetInserted -InsertedId $insertedId -AssetId $AssetId | Out-Null
     Write-Output "Seeded asset $AssetId -> $($resolved.StorageKey) ($sha)"
 }
