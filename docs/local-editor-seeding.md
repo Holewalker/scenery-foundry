@@ -11,7 +11,11 @@ consecuencias.
 
 ## Camino rápido
 
-1. Crear directamente en PostgreSQL un usuario propietario y su proyecto (todavía no existe un
+1. Levantar el stack (`docker compose up -d --wait`). Postgres debe estar arriba y saludable
+   antes de cualquier `docker compose exec`, incluyendo la creación del usuario y el script de
+   seed de los pasos siguientes.
+
+2. Crear directamente en PostgreSQL un usuario propietario y su proyecto (todavía no existe un
    endpoint de registro propio):
 
    ```powershell
@@ -25,11 +29,11 @@ consecuencias.
    Usar el `id` devuelto como `<user-id>` a continuación, luego insertar un proyecto propio con
    `insert into projects(id, owner_id) values (gen_random_uuid(), '<user-id>') returning id;`.
 
-2. Dejar caer un archivo `.stl` real bajo `data/seed/`, por ejemplo `data/seed/fixture.stl`.
+3. Dejar caer un archivo `.stl` real bajo `data/seed/`, por ejemplo `data/seed/fixture.stl`.
    Nunca commitear este archivo — `data/` está ignorado precisamente para que nadie tenga que
    recordarlo.
 
-3. Ejecutar el script de seed para registrar ese archivo como una fila de `prepared_assets`
+4. Ejecutar el script de seed para registrar ese archivo como una fila de `prepared_assets`
    asociada al proyecto:
 
    ```powershell
@@ -40,9 +44,9 @@ consecuencias.
      -AssetId (New-Guid)
    ```
 
-4. Levantar el stack (`docker compose up -d --wait`), iniciar sesión con las credenciales
-   sembradas, y abrir el editor en `http://localhost:8081/?project=<project-id>`. El asset
-   sembrado aparece en el catálogo y puede insertarse en la escena.
+5. Iniciar sesión con las credenciales sembradas y abrir el editor en
+   `http://localhost:8081/?project=<project-id>`. El asset sembrado aparece en el catálogo y
+   puede insertarse en la escena.
 
 ## Detalles
 
