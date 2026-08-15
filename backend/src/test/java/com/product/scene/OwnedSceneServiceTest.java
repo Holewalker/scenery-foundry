@@ -48,6 +48,35 @@ class OwnedSceneServiceTest {
     }
 
     @Test
+    void rejectsSceneObjectWhenTranslationMmDoesNotMatchMatrixTranslation() {
+        var repository = new InMemoryOwnedSceneRepository();
+        var service = new OwnedSceneService(repository);
+        service.createProject(new Project(projectId, ownerA));
+        repository.saveAsset(new PreparedAsset(assetId, projectId, AssetProcessingStatus.READY,
+            AssetGeometryStatus.VALID_VOLUME, "assets/a.stl", "a".repeat(64)));
+
+        var mismatched = new SceneDtos.SceneObjectDto(1, assetId, 1,
+            new double[] {999, 0, 0}, new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}, identity());
+
+        assertThatThrownBy(() -> service.replaceScene(ownerA, projectId, new SceneDtos.SceneDto(List.of(mismatched))))
+            .isInstanceOf(InvalidSceneException.class);
+
+        var consistent = new SceneDtos.SceneObjectDto(1, assetId, 1,
+            new double[] {0, 0, 0}, new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}, identity());
+        service.replaceScene(ownerA, projectId, new SceneDtos.SceneDto(List.of(consistent)));
+        assertThat(service.loadScene(ownerA, projectId).objects()).hasSize(1);
+    }
+
+    @Test
+    void rejectsNullSceneObjectsInsteadOfThrowingNullPointerException() {
+        var service = new OwnedSceneService(new InMemoryOwnedSceneRepository());
+        service.createProject(new Project(projectId, ownerA));
+
+        assertThatThrownBy(() -> service.replaceScene(ownerA, projectId, new SceneDtos.SceneDto(null)))
+            .isInstanceOf(InvalidSceneException.class);
+    }
+
+    @Test
     void rejectsNonAffineNonUnitQuaternionAndNonPositiveScaleTransforms() {
         assertThatThrownBy(() -> SceneTransform.of(identityWith(15, 2), new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}))
             .isInstanceOf(InvalidSceneException.class);
