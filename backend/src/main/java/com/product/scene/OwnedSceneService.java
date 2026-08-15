@@ -13,6 +13,7 @@ import org.springframework.stereotype.Service;
 @Service
 public class OwnedSceneService {
     private static final int MAX_SCENE_OBJECTS = 250;
+    private static final double TRANSLATION_EPSILON_MM = 1e-6;
     private static final String DATA_ROOT = System.getenv().getOrDefault("SCENE_DATA_ROOT", "/data");
     private final OwnedSceneRepository repository;
     public OwnedSceneService(OwnedSceneRepository repository) { this.repository = repository; }
@@ -41,6 +42,7 @@ public class OwnedSceneService {
     public void replaceScene(UUID ownerId, UUID projectId, SceneDtos.SceneDto scene) {
         findProject(ownerId, projectId);
         var objects = scene.objects();
+        if (objects == null) throw new InvalidSceneException("scene must include an objects list");
         if (objects.size() > MAX_SCENE_OBJECTS) throw new InvalidSceneException("scene exceeds the maximum object count");
         if (objects.stream().map(SceneDtos.SceneObjectDto::id).distinct().count() != objects.size())
             throw new InvalidSceneException("scene object ids must be unique");
@@ -51,8 +53,20 @@ public class OwnedSceneService {
     private static SceneObject toDomain(UUID projectId, Set<UUID> assetIds, SceneDtos.SceneObjectDto dto) {
         if (dto.matrixContractVersion() != 1 || !assetIds.contains(dto.assetId()))
             throw new InvalidSceneException("scene object references an invalid asset or contract version");
+        requireMatchingTranslation(dto.translationMm(), dto.matrixWorldColumnMajor());
         return new SceneObject(SceneObjectId.of(dto.id()), projectId, dto.assetId(),
             SceneTransform.of(dto.matrixWorldColumnMajor(), dto.quaternionXyzw(), dto.scale()));
+    }
+
+    /** matrixWorldColumnMajor is the canonical transform; translationMm is a client convenience field that
+     * must agree with it, so mismatched input is rejected rather than one representation silently winning. */
+    private static void requireMatchingTranslation(double[] translationMm, double[] matrix) {
+        if (translationMm == null || translationMm.length != 3 || matrix == null || matrix.length != 16) return;
+        if (Math.abs(translationMm[0] - matrix[12]) > TRANSLATION_EPSILON_MM
+            || Math.abs(translationMm[1] - matrix[13]) > TRANSLATION_EPSILON_MM
+            || Math.abs(translationMm[2] - matrix[14]) > TRANSLATION_EPSILON_MM) {
+            throw new InvalidSceneException("translationMm must match matrixWorldColumnMajor translation");
+        }
     }
 
     private static SceneDtos.SceneObjectDto toDto(SceneObject object) {
