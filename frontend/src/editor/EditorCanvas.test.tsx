@@ -132,6 +132,17 @@ describe('EditorCanvas', () => {
     expect(useEditorStore.getState().objects[0].translationMm).toEqual([10, 20, 30])
   })
 
+  it('adds a decorative grid to the viewport without introducing an extra ground mesh', async () => {
+    const id = useEditorStore.getState().insert('asset-1')
+    useEditorStore.getState().select(id)
+
+    const { container } = render(<EditorCanvas projectId="project-1" />)
+    await waitFor(() => expect(transformSpy).toHaveBeenCalled())
+
+    expect(container.querySelectorAll('gridHelper').length).toBeGreaterThan(0)
+    expect(container.querySelectorAll('mesh')).toHaveLength(1)
+  })
+
   it('wires the active transform control mode to the store transform mode', async () => {
     const id = useEditorStore.getState().insert('asset-1')
     useEditorStore.getState().select(id)

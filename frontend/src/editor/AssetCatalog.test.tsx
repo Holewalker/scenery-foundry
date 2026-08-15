@@ -23,4 +23,18 @@ describe('AssetCatalog', () => {
     expect(state.objects[0]?.assetId).toBe('asset-a')
     expect(state.selectedId).toBe(state.objects[0]?.id)
   })
+
+  it('decorates each asset button with a hidden icon without changing its text content or button count', () => {
+    render(<AssetCatalog assets={[{ id: 'asset-a' }, { id: 'asset-b' }]} />)
+
+    const buttons = screen.getAllByRole('button')
+    expect(buttons).toHaveLength(2)
+
+    const [firstButton] = buttons
+    const icon = firstButton.querySelector('svg[aria-hidden="true"]')
+    expect(icon).not.toBeNull()
+    expect(firstButton.querySelector('title')).toBeNull()
+    expect(firstButton.querySelector('desc')).toBeNull()
+    expect(firstButton.textContent).toBe('asset-a')
+  })
 })

@@ -90,8 +90,13 @@ export function EditorCanvas({ projectId }: EditorCanvasProps) {
 
   return (
     <Canvas camera={{ position: [0, 500, 500] }}>
+      <color attach="background" args={['#0f161b']} />
+      <fog attach="fog" args={['#0f161b', 800, 3000]} />
+      <hemisphereLight args={['#8fa9b8', '#1c2830', 0.5]} />
       <ambientLight intensity={0.6} />
       <directionalLight position={[500, 500, 500]} />
+      <gridHelper args={[2000, 20, '#3a4b56', '#22303a']} />
+      <gridHelper args={[200, 20, '#4d616d', '#2a3944']} />
       {objects.map((object) => (
         <EditorObjectMesh key={object.id} projectId={projectId} object={object} />
       ))}

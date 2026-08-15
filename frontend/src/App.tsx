@@ -112,12 +112,23 @@ export function App() {
       </section>
       <footer className="editor-toolbar">
         <button type="button" aria-pressed={mode === 'translate'} onClick={() => setMode('translate')}>
+          <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16">
+            <path d="M8 1v14M1 8h14M4 4L1 8l3 4M12 4l3 4-3 4M4 12l4 3 4-3M4 4l4-3 4 3" />
+          </svg>
           Move
         </button>
         <button type="button" aria-pressed={mode === 'rotate'} onClick={() => setMode('rotate')}>
+          <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16">
+            <path d="M13 8A5 5 0 1 1 8 3" />
+            <path d="M8 1l3 2-3 2" />
+          </svg>
           Rotate
         </button>
         <button type="button" onClick={handleSave} disabled={saving}>
+          <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16">
+            <path d="M2 2h9l3 3v9H2z" />
+            <path d="M5 2v4h5V2M4 14v-5h8v5" />
+          </svg>
           {saving ? 'Saving…' : 'Save'}
         </button>
       </footer>

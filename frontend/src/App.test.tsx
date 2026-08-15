@@ -131,6 +131,18 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument()
   })
 
+  it('augments toolbar buttons with hidden decorative icons without changing their accessible names or text', async () => {
+    await signIn()
+
+    for (const name of ['Move', 'Rotate', 'Save']) {
+      const button = screen.getByRole('button', { name })
+      const icon = button.querySelector('svg[aria-hidden="true"]')
+      expect(icon).not.toBeNull()
+      expect(button.querySelector('title')).toBeNull()
+      expect(button.querySelector('desc')).toBeNull()
+    }
+  })
+
   it('places the asset catalog and viewport inside distinct panel containers', async () => {
     await signIn()
 
