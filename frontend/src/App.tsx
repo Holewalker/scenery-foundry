@@ -65,20 +65,22 @@ export function App() {
   if (!authenticated) {
     return (
       <main>
-        <p className="eyebrow">3D workspace</p>
-        <h1>Scenery Foundry</h1>
-        <form onSubmit={handleSubmit}>
-          <label>
-            Email
-            <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required />
-          </label>
-          <label>
-            Password
-            <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" required />
-          </label>
-          <button type="submit">Sign in</button>
-          {error && <p role="alert">{error}</p>}
-        </form>
+        <div className="login-card" data-testid="login-card">
+          <p className="eyebrow">3D workspace</p>
+          <h1>Scenery Foundry</h1>
+          <form onSubmit={handleSubmit}>
+            <label>
+              Email
+              <input value={email} onChange={(event) => setEmail(event.target.value)} type="email" required />
+            </label>
+            <label>
+              Password
+              <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" required />
+            </label>
+            <button type="submit">Sign in</button>
+            {error && <p role="alert">{error}</p>}
+          </form>
+        </div>
       </main>
     )
   }

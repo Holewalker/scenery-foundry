@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetEditorStore, useEditorStore } from './editor/store'
 
@@ -42,6 +42,17 @@ describe('App', () => {
     expect(screen.getByRole('heading', { name: 'Scenery Foundry' })).toBeInTheDocument()
     expect(screen.getByLabelText('Email')).toBeInTheDocument()
     expect(screen.getByLabelText('Password')).toBeInTheDocument()
+  })
+
+  it('renders the login form inside a token-styled card while preserving accessible names', () => {
+    render(<App />)
+
+    const card = screen.getByTestId('login-card')
+
+    expect(within(card).getByRole('heading', { name: 'Scenery Foundry' })).toBeInTheDocument()
+    expect(within(card).getByLabelText('Email')).toBeInTheDocument()
+    expect(within(card).getByLabelText('Password')).toBeInTheDocument()
+    expect(within(card).getByRole('button', { name: 'Sign in' })).toBeInTheDocument()
   })
 
   it('loads the project catalog and scene and shows the editor after a successful login', async () => {
