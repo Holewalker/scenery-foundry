@@ -54,8 +54,8 @@ describe('App', () => {
 
     await waitFor(() => expect(screen.getByTestId('editor-canvas')).toBeInTheDocument())
     expect(loginMock).toHaveBeenCalledWith('owner@example.com', 'secret')
-    expect(fetchAssetsMock).toHaveBeenCalledWith('project-1')
-    expect(fetchSceneMock).toHaveBeenCalledWith('project-1')
+    await waitFor(() => expect(fetchAssetsMock).toHaveBeenCalledWith('project-1'))
+    await waitFor(() => expect(fetchSceneMock).toHaveBeenCalledWith('project-1'))
   })
 
   it('shows an error message when login is rejected', async () => {
