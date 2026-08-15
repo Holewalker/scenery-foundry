@@ -55,6 +55,14 @@ function EditorObjectMesh({ projectId, object }: { projectId: string; object: Ed
 
   if (selectedId !== object.id) return mesh
 
+  // Commit the transform ONCE, when the drag ends — not on every intermediate onObjectChange.
+  // TransformControls already mutates the attached mesh directly and drei re-renders the
+  // Canvas frame on its own 'change' event, so the drag stays visually smooth without this.
+  // Committing to the store on every intermediate change re-renders EditorObjectMesh, which
+  // gives `mesh` a new element identity; drei's TransformControls re-runs its attach effect
+  // whenever `children` changes identity, calling detach() (which clears its drag axis) in the
+  // middle of the drag. That silently stops the drag from moving further and, since axis also
+  // gates the mouseUp dispatch, leaves orbit controls disabled after the user releases the mouse.
   function handleObjectChange() {
     const target = meshRef.current
     if (!target) return
@@ -66,8 +74,10 @@ function EditorObjectMesh({ projectId, object }: { projectId: string; object: Ed
     <TransformControls
       mode={mode}
       onMouseDown={() => setDragging(true)}
-      onMouseUp={() => setDragging(false)}
-      onObjectChange={handleObjectChange}
+      onMouseUp={() => {
+        handleObjectChange()
+        setDragging(false)
+      }}
     >
       {mesh}
     </TransformControls>
