@@ -7,10 +7,11 @@ import { EditorCanvas } from './EditorCanvas'
 const fetchAssetStlMock = vi.fn()
 vi.mock('../api/client', () => ({ fetchAssetStl: (...args: unknown[]) => fetchAssetStlMock(...args) }))
 
+const parseSpy = vi.fn((buffer: unknown) => ({ buffer }))
 vi.mock('three/examples/jsm/loaders/STLLoader.js', () => ({
   STLLoader: class {
-    parse() {
-      return {}
+    parse(buffer: unknown) {
+      return parseSpy(buffer)
     }
   },
 }))
@@ -36,15 +37,40 @@ beforeEach(() => {
   fetchAssetStlMock.mockReset().mockResolvedValue(new ArrayBuffer(0))
   orbitSpy.mockReset()
   transformSpy.mockReset()
+  parseSpy.mockClear()
 })
 
 describe('EditorCanvas', () => {
-  it('fetches the authenticated STL bytes for a scene object and parses them for rendering', async () => {
+  it('fetches the authenticated STL bytes for a scene object and parses the exact fetched bytes for rendering', async () => {
+    const buffer = new ArrayBuffer(8)
+    fetchAssetStlMock.mockResolvedValue(buffer)
     useEditorStore.getState().insert('asset-1')
 
     render(<EditorCanvas projectId="project-1" />)
 
     await waitFor(() => expect(fetchAssetStlMock).toHaveBeenCalledWith('project-1', 'asset-1'))
+    await waitFor(() => expect(parseSpy).toHaveBeenCalledWith(buffer))
+  })
+
+  it('routes a rejected STL fetch into the editor error state instead of an unhandled rejection', async () => {
+    fetchAssetStlMock.mockRejectedValue(new Error('network down'))
+    useEditorStore.getState().insert('asset-1')
+
+    render(<EditorCanvas projectId="project-1" />)
+
+    await waitFor(() => expect(useEditorStore.getState().error).not.toBeNull())
+    expect(parseSpy).not.toHaveBeenCalled()
+  })
+
+  it('routes an STLLoader.parse failure into the editor error state', async () => {
+    parseSpy.mockImplementationOnce(() => {
+      throw new Error('malformed geometry')
+    })
+    useEditorStore.getState().insert('asset-1')
+
+    render(<EditorCanvas projectId="project-1" />)
+
+    await waitFor(() => expect(useEditorStore.getState().error).not.toBeNull())
   })
 
   it('disables orbit controls while a transform control drag is active, and restores it after', async () => {

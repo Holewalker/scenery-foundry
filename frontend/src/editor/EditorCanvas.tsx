@@ -13,15 +13,20 @@ interface EditorCanvasProps {
 
 function useObjectGeometry(projectId: string, assetId: string): BufferGeometry | null {
   const [geometry, setGeometry] = useState<BufferGeometry | null>(null)
+  const setError = useEditorStore((state) => state.setError)
   useEffect(() => {
     let cancelled = false
-    fetchAssetStl(projectId, assetId).then((buffer) => {
-      if (!cancelled) setGeometry(new STLLoader().parse(buffer))
-    })
+    fetchAssetStl(projectId, assetId)
+      .then((buffer) => {
+        if (!cancelled) setGeometry(new STLLoader().parse(buffer))
+      })
+      .catch(() => {
+        if (!cancelled) setError('Failed to load object geometry.')
+      })
     return () => {
       cancelled = true
     }
-  }, [projectId, assetId])
+  }, [projectId, assetId, setError])
   return geometry
 }
 
