@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetEditorStore, useEditorStore } from './editor/store'
 
@@ -44,6 +44,17 @@ describe('App', () => {
     expect(screen.getByLabelText('Password')).toBeInTheDocument()
   })
 
+  it('renders the login form inside a token-styled card while preserving accessible names', () => {
+    render(<App />)
+
+    const card = screen.getByTestId('login-card')
+
+    expect(within(card).getByRole('heading', { name: 'Scenery Foundry' })).toBeInTheDocument()
+    expect(within(card).getByLabelText('Email')).toBeInTheDocument()
+    expect(within(card).getByLabelText('Password')).toBeInTheDocument()
+    expect(within(card).getByRole('button', { name: 'Sign in' })).toBeInTheDocument()
+  })
+
   it('loads the project catalog and scene and shows the editor after a successful login', async () => {
     loginMock.mockResolvedValue(undefined)
     render(<App />)
@@ -80,9 +91,11 @@ describe('App', () => {
 
     expect(saveSceneMock).toHaveBeenCalledTimes(1)
     expect(saveButton).toBeDisabled()
+    expect(screen.getByRole('status')).toHaveTextContent('Saving…')
 
     resolveSave({ objects: [] })
     await waitFor(() => expect(saveButton).not.toBeDisabled())
+    expect(screen.getByRole('status')).toHaveTextContent('Saved')
   })
 
   it('shows an error message when saving the scene fails', async () => {
@@ -92,6 +105,7 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Failed to save the scene.'))
+    expect(screen.getByRole('status')).toHaveTextContent('Save failed')
   })
 
   it('wires a mode switch control to the active transform mode', async () => {
@@ -102,5 +116,43 @@ describe('App', () => {
     expect(useEditorStore.getState().mode).toBe('rotate')
     fireEvent.click(screen.getByRole('button', { name: 'Move' }))
     expect(useEditorStore.getState().mode).toBe('translate')
+  })
+
+  it('shows a clean save state in the header before any edit, and reflects unsaved changes after one', async () => {
+    await signIn()
+
+    expect(screen.getByRole('status')).toHaveTextContent('Saved')
+
+    act(() => {
+      useEditorStore.getState().insert('asset-a')
+    })
+
+    expect(screen.getByRole('status')).toHaveTextContent('Unsaved changes')
+    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument()
+  })
+
+  it('augments toolbar buttons with hidden decorative icons without changing their accessible names or text', async () => {
+    await signIn()
+
+    for (const name of ['Move', 'Rotate', 'Save']) {
+      const button = screen.getByRole('button', { name })
+      const icon = button.querySelector('svg[aria-hidden="true"]')
+      expect(icon).not.toBeNull()
+      expect(button.querySelector('title')).toBeNull()
+      expect(button.querySelector('desc')).toBeNull()
+    }
+  })
+
+  it('places the asset catalog and viewport inside distinct panel containers', async () => {
+    await signIn()
+
+    const catalogPanel = document.querySelector('aside.panel')
+    const viewportPanel = document.querySelector('section.viewport')
+
+    expect(catalogPanel).not.toBeNull()
+    expect(viewportPanel).not.toBeNull()
+    expect(within(catalogPanel as HTMLElement).getByRole('list')).toBeInTheDocument()
+    expect(within(viewportPanel as HTMLElement).getByTestId('editor-canvas')).toBeInTheDocument()
+    expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual(['Move', 'Rotate', 'Save'])
   })
 })

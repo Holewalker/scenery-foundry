@@ -1,6 +1,6 @@
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls, TransformControls } from '@react-three/drei'
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { BufferGeometry, Mesh } from 'three'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
 import { fetchAssetStl } from '../api/client'
@@ -30,7 +30,20 @@ function useObjectGeometry(projectId: string, assetId: string): BufferGeometry |
   return geometry
 }
 
-function EditorObjectMesh({ projectId, object }: { projectId: string; object: EditorObject }) {
+// Memoized so a re-render of EditorCanvas from an UNRELATED store field (most notably
+// `orbitEnabled`, flipped by TransformControls' own onMouseDown at the start of every drag)
+// does not re-execute this component. Without this, `mesh` below gets a new element identity
+// on every such render, and drei's TransformControls attach effect (keyed on `children`
+// identity, see @react-three/drei/core/TransformControls.js) detaches and reattaches the real
+// three-stdlib controls — clearing its tracked drag axis mid-gesture and, since that axis also
+// gates the mouseUp dispatch, intermittently leaving orbit controls disabled after mouseup.
+const EditorObjectMesh = memo(function EditorObjectMesh({
+  projectId,
+  object,
+}: {
+  projectId: string
+  object: EditorObject
+}) {
   const geometry = useObjectGeometry(projectId, object.assetId)
   const meshRef = useRef<Mesh>(null)
   const selectedId = useEditorStore((state) => state.selectedId)
@@ -82,7 +95,7 @@ function EditorObjectMesh({ projectId, object }: { projectId: string; object: Ed
       {mesh}
     </TransformControls>
   )
-}
+})
 
 export function EditorCanvas({ projectId }: EditorCanvasProps) {
   const objects = useEditorStore((state) => state.objects)
@@ -90,8 +103,13 @@ export function EditorCanvas({ projectId }: EditorCanvasProps) {
 
   return (
     <Canvas camera={{ position: [0, 500, 500] }}>
+      <color attach="background" args={['#0f161b']} />
+      <fog attach="fog" args={['#0f161b', 800, 3000]} />
+      <hemisphereLight args={['#8fa9b8', '#1c2830', 0.5]} />
       <ambientLight intensity={0.6} />
       <directionalLight position={[500, 500, 500]} />
+      <gridHelper args={[2000, 20, '#3a4b56', '#22303a']} />
+      <gridHelper args={[200, 20, '#4d616d', '#2a3944']} />
       {objects.map((object) => (
         <EditorObjectMesh key={object.id} projectId={projectId} object={object} />
       ))}
