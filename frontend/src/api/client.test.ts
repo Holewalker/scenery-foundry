@@ -70,4 +70,19 @@ describe('api client', () => {
 
     await expect(fetchScene('project-missing')).rejects.toThrow('failed to fetch scene')
   })
+
+  it('retries the csrf fetch on a later mutating request after an earlier csrf fetch failure', async () => {
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 503 } as Response)
+      .mockResolvedValueOnce(jsonResponse({ token: 'csrf-token-value', headerName: 'X-CSRF-TOKEN' }))
+      .mockResolvedValueOnce(jsonResponse({ objects: [] }))
+
+    await expect(saveScene('project-1', { objects: [] })).rejects.toThrow()
+    await expect(saveScene('project-1', { objects: [] })).resolves.toEqual({ objects: [] })
+
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/csrf')
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('/api/csrf')
+  })
 })

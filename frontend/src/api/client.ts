@@ -12,10 +12,15 @@ export function resetCsrfCache(): void {
 }
 
 async function fetchCsrfToken(): Promise<CsrfToken> {
-  cachedCsrfToken ??= fetch('/api/csrf', { credentials: 'same-origin' }).then((response) => {
-    if (!response.ok) throw new Error('failed to fetch csrf token')
-    return response.json() as Promise<CsrfToken>
-  })
+  cachedCsrfToken ??= fetch('/api/csrf', { credentials: 'same-origin' })
+    .then((response) => {
+      if (!response.ok) throw new Error('failed to fetch csrf token')
+      return response.json() as Promise<CsrfToken>
+    })
+    .catch((error: unknown) => {
+      cachedCsrfToken = null
+      throw error
+    })
   return cachedCsrfToken
 }
 
