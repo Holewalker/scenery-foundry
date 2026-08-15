@@ -1,17 +1,18 @@
-# Local editor seeding (STL fixtures)
+# Seeding local del editor (fixtures STL)
 
-To exercise the 3D editor end to end on a developer machine, you need a logged-in user, a
-project they own, and a `prepared_assets` row that points at a real `.stl` file. `data/seed/`
-and `scripts/seed-local-editor.ps1` provide that wiring for local development only. **They are
-disposable local fixtures, not an upload feature, not a manifest, and not object storage.**
-Nothing under `data/` is served, backed up, or shipped; the directory is fully gitignored
-(`/data/` and `data/` in `.gitignore`) and every path under it can be deleted and recreated at
-any time without consequence.
+Para ejercitar el editor 3D de extremo a extremo en una máquina de desarrollo hace falta un
+usuario autenticado, un proyecto que le pertenezca, y una fila en `prepared_assets` que apunte
+a un archivo `.stl` real. `data/seed/` y `scripts/seed-local-editor.ps1` proveen ese cableado
+solo para desarrollo local. **Son fixtures locales desechables, no una funcionalidad de subida,
+no un manifiesto, y no almacenamiento de objetos.** Nada bajo `data/` se sirve, respalda ni
+distribuye; el directorio está completamente ignorado por Git (`/data/` y `data/` en
+`.gitignore`) y cualquier ruta debajo puede borrarse y recrearse en cualquier momento sin
+consecuencias.
 
-## Quick path
+## Camino rápido
 
-1. Create a project-owning user and project directly in PostgreSQL (there is no self-service
-   registration endpoint yet):
+1. Crear directamente en PostgreSQL un usuario propietario y su proyecto (todavía no existe un
+   endpoint de registro propio):
 
    ```powershell
    docker compose exec -T postgres psql -U scenery -d scenery_foundry -c @"
@@ -21,13 +22,15 @@ any time without consequence.
    "@
    ```
 
-   Use the returned `id` as `<user-id>` below, then insert an owned project with
+   Usar el `id` devuelto como `<user-id>` a continuación, luego insertar un proyecto propio con
    `insert into projects(id, owner_id) values (gen_random_uuid(), '<user-id>') returning id;`.
 
-2. Drop a real `.stl` file under `data/seed/`, for example `data/seed/fixture.stl`. Never commit
-   this file — `data/` is gitignored precisely so nobody has to remember that.
+2. Dejar caer un archivo `.stl` real bajo `data/seed/`, por ejemplo `data/seed/fixture.stl`.
+   Nunca commitear este archivo — `data/` está ignorado precisamente para que nadie tenga que
+   recordarlo.
 
-3. Run the seed script to register that file as a `prepared_assets` row scoped to the project:
+3. Ejecutar el script de seed para registrar ese archivo como una fila de `prepared_assets`
+   asociada al proyecto:
 
    ```powershell
    ./scripts/seed-local-editor.ps1 `
@@ -37,30 +40,30 @@ any time without consequence.
      -AssetId (New-Guid)
    ```
 
-4. Start the stack (`docker compose up -d --wait`), log in with the seeded credentials, and open
-   the editor at `http://localhost:8081/?project=<project-id>`. The seeded asset appears in the
-   catalog and can be inserted into the scene.
+4. Levantar el stack (`docker compose up -d --wait`), iniciar sesión con las credenciales
+   sembradas, y abrir el editor en `http://localhost:8081/?project=<project-id>`. El asset
+   sembrado aparece en el catálogo y puede insertarse en la escena.
 
-## Details
+## Detalles
 
-| Topic | Decision |
+| Tema | Decisión |
 |-------|----------|
-| What `data/seed/*.stl` is | A local-only source file the seed script reads to compute a SHA-256 checksum and register a `storage_key`. It plays the same role a real upload pipeline would play once one exists. |
-| What it is NOT | Not an upload endpoint, not a persisted manifest, not any form of object storage. There is no code path that writes into `data/` from application traffic. |
-| Path safety | `Resolve-SeedAssetPath` in `scripts/seed-local-editor.ps1` rejects absolute paths, non-`.stl` extensions, missing files, symlinks, and any path that escapes `data/` via traversal. |
-| Ownership | The script verifies the given user exists and owns the given project before writing the `prepared_assets` row; it never creates users or projects itself. |
-| Git hygiene | `data/` and `/data/` are both listed in `.gitignore`. No `.stl` binary or seed data is ever expected in a commit or a PR diff. |
-| Container access | `compose.yml` bind-mounts `./data:/data` into `backend` and `geometry-worker`, so a file dropped under `data/seed/` on the host is visible to both services without a rebuild. |
+| Qué es `data/seed/*.stl` | Un archivo fuente local que el script de seed lee para calcular un checksum SHA-256 y registrar una `storage_key`. Cumple el mismo papel que cumpliría un pipeline de subida real una vez exista. |
+| Qué NO es | No es un endpoint de subida, no es un manifiesto persistido, no es ninguna forma de almacenamiento de objetos. No existe ningún camino de código que escriba en `data/` desde tráfico de la aplicación. |
+| Seguridad de rutas | `Resolve-SeedAssetPath` en `scripts/seed-local-editor.ps1` rechaza rutas absolutas, extensiones distintas de `.stl`, archivos inexistentes, symlinks, y cualquier ruta que escape de `data/` mediante traversal. |
+| Propiedad | El script verifica que el usuario dado existe y es propietario del proyecto dado antes de escribir la fila en `prepared_assets`; nunca crea usuarios ni proyectos por sí mismo. |
+| Higiene de Git | `data/` y `/data/` están en `.gitignore`. No se espera ningún binario `.stl` ni dato de seed en un commit o diff de PR. |
+| Acceso desde contenedores | `compose.yml` monta `./data:/data` en `backend` y `geometry-worker`, así que un archivo dejado bajo `data/seed/` en el host es visible para ambos servicios sin necesidad de reconstruir la imagen. |
 
 ## Checklist
 
-- [ ] The `.stl` fixture lives under `data/seed/` and is not staged in Git.
-- [ ] The seeding user exists and owns the project referenced by `-ProjectId`.
-- [ ] `scripts/seed-local-editor.ps1` printed `Seeded asset <id> -> seed/<file> (<sha256>)`.
-- [ ] The asset is visible in the editor's catalog after logging in with the seeded user.
+- [ ] El fixture `.stl` vive bajo `data/seed/` y no está en el índice de Git.
+- [ ] El usuario de seed existe y es propietario del proyecto referenciado por `-ProjectId`.
+- [ ] `scripts/seed-local-editor.ps1` imprimió `Seeded asset <id> -> seed/<file> (<sha256>)`.
+- [ ] El asset es visible en el catálogo del editor tras iniciar sesión con el usuario sembrado.
 
-## Next step
+## Siguiente paso
 
-See the top-level [`README.md`](../README.md) Quick path for full-stack startup, and
-`scripts/seed-local-editor-test.ps1` for the unit tests covering the script's path-safety and
-ownership checks.
+Ver el [`README.md`](../README.md) de nivel superior para el arranque completo del stack, y
+`scripts/seed-local-editor-test.ps1` para las pruebas unitarias que cubren la seguridad de
+rutas y las verificaciones de propiedad del script.

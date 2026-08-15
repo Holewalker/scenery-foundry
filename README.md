@@ -79,9 +79,9 @@ docs/             PRD, arquitectura, stack y ADRs
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - [`docs/STACK.md`](docs/STACK.md)
 - [`docs/adr/`](docs/adr/README.md) — decisiones de arquitectura aceptadas
-- [`docs/local-editor-seeding.md`](docs/local-editor-seeding.md) — local STL fixtures for the
-  3D editor (`data/seed/*.stl`, disposable and gitignored, not an upload/manifest/storage
-  feature)
+- [`docs/local-editor-seeding.md`](docs/local-editor-seeding.md) — fixtures STL locales para el
+  editor 3D (`data/seed/*.stl`, desechables e ignorados por Git, no es una funcionalidad de
+  subida/manifiesto/almacenamiento)
 
 ## Principios no negociables
 

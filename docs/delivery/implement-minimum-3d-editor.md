@@ -1,99 +1,107 @@
-# Delivery record: implement-minimum-3d-editor
+# Registro de entrega: implement-minimum-3d-editor
 
-This SDD change delivers the minimum authenticated 3D editor: an owner-scoped asset catalog,
-an atomic whole-scene save/reload API, and a React Three Fiber editor served same-origin
-through Nginx. It shipped as a draft feature-branch chain (tracker `feature/tracker`, base
-`main`) so each PR stayed inside the reviewer budget. This record captures the final
-verification evidence for the whole chain: the full `./scripts/check.ps1` suite and an
-independent, manually-run end-to-end delivery journey.
+Este cambio SDD entrega el editor 3D autenticado mínimo: un catálogo de assets acotado por
+propietario, una API de guardado/recarga atómica de la escena completa, y un editor React
+Three Fiber servido same-origin a través de Nginx. Se entregó como una cadena de PRs en draft
+(tracker `feature/tracker`, base `main`) para que cada PR se mantuviera dentro del presupuesto
+de revisión. Este registro captura la evidencia de verificación final de toda la cadena: la
+suite completa `./scripts/check.ps1` y un journey de entrega de extremo a extremo ejecutado de
+forma independiente y manual.
 
-## Quick path
+## Camino rápido
 
-1. `./scripts/check.ps1` — full mode: toolchains, focused tests, PostgreSQL boundary, image
-   builds, and stack health. See [Verification suite](#verification-suite-scriptscheckps1)
-   below for the exact run and result.
-2. Manual delivery journey — login, fetch STL, insert/transform an object, save, reload,
-   confirm persistence, all through the frontend origin with the full stack running. See
-   [End-to-end delivery journey](#end-to-end-delivery-journey) below for the exact commands
-   and evidence.
+1. `./scripts/check.ps1` — modo completo: toolchains, tests focalizados, frontera con
+   PostgreSQL, construcción de imágenes, y salud del stack. Ver
+   [Suite de verificación](#suite-de-verificación-scriptscheckps1) abajo para la ejecución
+   exacta y el resultado.
+2. Journey de entrega manual — login, obtención del STL, inserción/transformación de un objeto,
+   guardado, recarga, confirmación de persistencia, todo a través del origen del frontend con
+   el stack completo levantado. Ver
+   [Journey de entrega de extremo a extremo](#journey-de-entrega-de-extremo-a-extremo) abajo
+   para los comandos exactos y la evidencia.
 
-## Verification suite: `./scripts/check.ps1`
+## Suite de verificación: `./scripts/check.ps1`
 
-| Field | Value |
+| Campo | Valor |
 |-------|-------|
-| Command | `./scripts/check.ps1` (default full mode — no `-Mode quick`) |
-| Exit code | `0` |
-| Backend tests | `Tests run: 39, Failures: 0, Errors: 0, Skipped: 0` — `BUILD SUCCESS` |
-| Coverage | `JcsFixtureTest`, `CsrfControllerTest`, `ConcurrentCaptureIntegrationTest`, `ExportControllerTest`, `JdbcCaptureProjectionServiceTest`, `JdbcExportRepositoryTest`, `SnapshotV1WriterTest`, `AuthControllerTest`, `AuthenticatedUserTest`, `IdentityMigrationIntegrationTest`, `PlatformMigrationIntegrationTest`, `OwnedSceneMigrationIntegrationTest`, `OwnedSceneServiceTest`, `ProjectControllerTest`, `SceneryFoundryApplicationTest` |
-| Image builds | `backend`, `frontend`, `geometry-worker` — all built |
-| Stack health | `postgres`, `backend`, `geometry-worker`, `frontend` all reported `Healthy`, then torn down by the script itself |
-| Final line | `Full verification passed: toolchains, tests, PostgreSQL boundary, images, and stack health.` |
+| Comando | `./scripts/check.ps1` (modo completo por defecto — sin `-Mode quick`) |
+| Código de salida | `0` |
+| Tests de backend | `Tests run: 39, Failures: 0, Errors: 0, Skipped: 0` — `BUILD SUCCESS` |
+| Cobertura | `JcsFixtureTest`, `CsrfControllerTest`, `ConcurrentCaptureIntegrationTest`, `ExportControllerTest`, `JdbcCaptureProjectionServiceTest`, `JdbcExportRepositoryTest`, `SnapshotV1WriterTest`, `AuthControllerTest`, `AuthenticatedUserTest`, `IdentityMigrationIntegrationTest`, `PlatformMigrationIntegrationTest`, `OwnedSceneMigrationIntegrationTest`, `OwnedSceneServiceTest`, `ProjectControllerTest`, `SceneryFoundryApplicationTest` |
+| Construcción de imágenes | `backend`, `frontend`, `geometry-worker` — todas construidas |
+| Salud del stack | `postgres`, `backend`, `geometry-worker`, `frontend` reportaron `Healthy`, luego el propio script los detuvo |
+| Línea final | `Full verification passed: toolchains, tests, PostgreSQL boundary, images, and stack health.` |
 
-The script provisions its own isolated Compose project (random suffix, e.g.
-`scenery-foundry-check-<pid>-<hash>`), so it does not interact with a developer's own
-`docker compose up` session.
+El script provisiona su propio proyecto Compose aislado (sufijo aleatorio, por ejemplo
+`scenery-foundry-check-<pid>-<hash>`), así que no interfiere con una sesión propia de
+`docker compose up` de un desarrollador.
 
-## End-to-end delivery journey
+## Journey de entrega de extremo a extremo
 
-Run independently of `check.ps1`, against the real `compose.yml` project, to prove the exact
-manual path a person exercises in the browser: login, fetch the STL bytes for a catalog asset,
-insert and transform an object in the scene, save, reload, and confirm it persisted — all
-through the frontend origin (`http://localhost:8081`), which Nginx proxies to the backend under
-`/api` same-origin (no CORS involved).
+Ejecutado de forma independiente de `check.ps1`, contra el proyecto real de `compose.yml`,
+para probar el camino manual exacto que una persona ejercitaría en el navegador: login,
+obtención de los bytes STL de un asset del catálogo, inserción y transformación de un objeto
+en la escena, guardado, recarga, y confirmación de que persistió — todo a través del origen
+del frontend (`http://localhost:8081`), que Nginx redirige al backend bajo `/api` en el mismo
+origen (sin CORS de por medio).
 
-### Setup
+### Preparación
 
 ```powershell
 docker compose up -d --wait
 docker compose ps
 ```
 
-Result: all four services (`postgres`, `backend`, `geometry-worker`, `frontend`) reported
-`Up ... (healthy)`.
+Resultado: los cuatro servicios (`postgres`, `backend`, `geometry-worker`, `frontend`)
+reportaron `Up ... (healthy)`.
 
-A dev user, an owned project, and one seeded asset (`data/seed/triangle.stl`, a disposable
-local fixture — see [`docs/local-editor-seeding.md`](../local-editor-seeding.md)) were
-provisioned via `psql` and `scripts/seed-local-editor.ps1`, following the same pattern that
-doc describes.
+Se provisionaron un usuario de desarrollo, un proyecto propio, y un asset sembrado
+(`data/seed/triangle.stl`, un fixture local desechable — ver
+[`docs/local-editor-seeding.md`](../local-editor-seeding.md)) mediante `psql` y
+`scripts/seed-local-editor.ps1`, siguiendo el mismo patrón que describe ese documento.
 
-### Journey steps and evidence
+### Pasos del journey y evidencia
 
-All requests below went through `http://localhost:8081` (the frontend/Nginx origin), using a
-single `curl` cookie jar to carry the session across requests — exactly how a browser would.
+Todas las peticiones siguientes pasaron por `http://localhost:8081` (el origen
+frontend/Nginx), usando un único cookie jar de `curl` para llevar la sesión entre peticiones —
+exactamente como lo haría un navegador.
 
-| Step | Request | Result |
+| Paso | Petición | Resultado |
 |------|---------|--------|
-| 1. Pre-login CSRF | `GET /api/csrf` | `200`, returned a session-bound token |
-| 2. Login | `POST /api/auth/login` with `X-CSRF-TOKEN` from step 1 | `HTTP/1.1 204`, session rotated (`Set-Cookie: JSESSIONID=...`) |
-| 3. Post-login CSRF | `GET /api/csrf` (fresh — the login rotated the session, invalidating the pre-login token) | `200`, new token |
-| 4. Confirm project access | `GET /api/projects/{id}` | `200`, `{"id":"b6e2473b-..."}`  |
-| 5. Asset catalog | `GET /api/projects/{id}/assets` | `200`, `[{"id":"65f6c7ba-..."}]` — the seeded asset |
-| 6. Fetch STL bytes | `GET /api/projects/{id}/assets/{assetId}/original` | `200`, 128 bytes; `sha256sum` of the downloaded bytes matched `data/seed/triangle.stl` exactly (`diff` reported no difference) |
-| 7. Scene before save | `GET /api/projects/{id}/scene` | `200`, `{"objects":[]}` |
-| 8. Insert + transform, save | `PUT /api/projects/{id}/scene` with `X-CSRF-TOKEN` from step 3, one object translated to `(10, 20, 30)` mm | `200`, echoed the object back with the exact translation, quaternion, scale, and column-major matrix sent |
-| 9. Reload | Fresh `GET /api/projects/{id}/scene` | `200`, returned object identical to step 8 — confirms the save persisted and survives a reload, not just an in-request echo |
-| 10. Stack health after the journey | `docker compose ps` | All four services still `healthy` |
+| 1. CSRF previo al login | `GET /api/csrf` | `200`, devolvió un token asociado a la sesión |
+| 2. Login | `POST /api/auth/login` con `X-CSRF-TOKEN` del paso 1 | `HTTP/1.1 204`, sesión rotada (`Set-Cookie: JSESSIONID=...`) |
+| 3. CSRF posterior al login | `GET /api/csrf` (fresco — el login rotó la sesión, invalidando el token previo) | `200`, token nuevo |
+| 4. Confirmación de acceso al proyecto | `GET /api/projects/{id}` | `200`, `{"id":"b6e2473b-..."}`  |
+| 5. Catálogo de assets | `GET /api/projects/{id}/assets` | `200`, `[{"id":"65f6c7ba-..."}]` — el asset sembrado |
+| 6. Obtención de bytes STL | `GET /api/projects/{id}/assets/{assetId}/original` | `200`, 128 bytes; el `sha256sum` de los bytes descargados coincidió exactamente con `data/seed/triangle.stl` (`diff` no reportó diferencias) |
+| 7. Escena antes de guardar | `GET /api/projects/{id}/scene` | `200`, `{"objects":[]}` |
+| 8. Insertar + transformar, guardar | `PUT /api/projects/{id}/scene` con `X-CSRF-TOKEN` del paso 3, un objeto trasladado a `(10, 20, 30)` mm | `200`, devolvió el objeto exacto con la traslación, cuaternión, escala y matriz column-major enviados |
+| 9. Recarga | `GET /api/projects/{id}/scene` fresco | `200`, devolvió un objeto idéntico al del paso 8 — confirma que el guardado persistió y sobrevive a una recarga, no solo un eco dentro de la misma petición |
+| 10. Salud del stack tras el journey | `docker compose ps` | Los cuatro servicios seguían `healthy` |
 
-### Teardown
+### Cierre
 
 ```powershell
 docker compose down
 ```
 
-Result: all containers and the network removed cleanly, exit code `0`.
+Resultado: todos los contenedores y la red se eliminaron limpiamente, código de salida `0`.
 
 ## Checklist
 
-- [x] `./scripts/check.ps1` passed (exit `0`, full mode, all 39 backend tests green, all four
-      services healthy).
-- [x] Login succeeded and rotated the session as expected.
-- [x] The CSRF token fetched after login (not before) was required and accepted for the
-      mutating `PUT /api/projects/{id}/scene` request.
-- [x] The fetched STL bytes are byte-identical to the seeded fixture (`sha256sum` + `diff`).
-- [x] An inserted/transformed object round-trips exactly through save and a fresh reload.
-- [x] The stack stayed healthy for the full journey and tore down cleanly afterward.
+- [x] `./scripts/check.ps1` pasó (código de salida `0`, modo completo, los 39 tests de backend
+      en verde, los cuatro servicios saludables).
+- [x] El login funcionó y rotó la sesión como se esperaba.
+- [x] El token CSRF obtenido después del login (no antes) fue requerido y aceptado para la
+      petición mutante `PUT /api/projects/{id}/scene`.
+- [x] Los bytes STL obtenidos son idénticos byte a byte al fixture sembrado (`sha256sum` +
+      `diff`).
+- [x] Un objeto insertado/transformado se conserva exactamente a través del guardado y una
+      recarga fresca.
+- [x] El stack se mantuvo saludable durante todo el journey y se detuvo limpiamente después.
 
-## Next step
+## Siguiente paso
 
-See [`docs/local-editor-seeding.md`](../local-editor-seeding.md) for how to provision the local
-fixtures used above, and the top-level [`README.md`](../../README.md) for full-stack startup.
+Ver [`docs/local-editor-seeding.md`](../local-editor-seeding.md) para cómo provisionar los
+fixtures locales usados arriba, y el [`README.md`](../../README.md) de nivel superior para el
+arranque completo del stack.
