@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import './app.css'
-import { fetchAssets, fetchScene, login } from './api/client'
+import { fetchAssets, fetchScene, login, saveScene } from './api/client'
 import { AssetCatalog } from './editor/AssetCatalog'
 import { EditorCanvas } from './editor/EditorCanvas'
 import { useEditorStore } from './editor/store'
@@ -19,6 +19,27 @@ export function App() {
   const assets = useEditorStore((state) => state.assets)
   const setAssets = useEditorStore((state) => state.setAssets)
   const loadScene = useEditorStore((state) => state.loadScene)
+  const toSceneDto = useEditorStore((state) => state.toSceneDto)
+  const mode = useEditorStore((state) => state.mode)
+  const setMode = useEditorStore((state) => state.setMode)
+  const saving = useEditorStore((state) => state.loading)
+  const setSaving = useEditorStore((state) => state.setLoading)
+  const saveError = useEditorStore((state) => state.error)
+  const setSaveError = useEditorStore((state) => state.setError)
+
+  async function handleSave() {
+    if (!projectId || saving) return
+    setSaving(true)
+    setSaveError(null)
+    try {
+      const saved = await saveScene(projectId, toSceneDto())
+      loadScene(saved)
+    } catch {
+      setSaveError('Failed to save the scene.')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   useEffect(() => {
     if (!authenticated || !projectId) return
@@ -74,7 +95,18 @@ export function App() {
     <div className="editor-shell">
       <AssetCatalog assets={assets} />
       <EditorCanvas projectId={projectId} />
-      {error && <p role="alert">{error}</p>}
+      <div className="editor-toolbar">
+        <button type="button" aria-pressed={mode === 'translate'} onClick={() => setMode('translate')}>
+          Move
+        </button>
+        <button type="button" aria-pressed={mode === 'rotate'} onClick={() => setMode('rotate')}>
+          Rotate
+        </button>
+        <button type="button" onClick={handleSave} disabled={saving}>
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+      {(error ?? saveError) && <p role="alert">{error ?? saveError}</p>}
     </div>
   )
 }

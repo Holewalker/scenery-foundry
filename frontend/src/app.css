@@ -35,3 +35,10 @@ main {
   padding: 1rem;
   overflow-y: auto;
 }
+
+.editor-toolbar {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+}
