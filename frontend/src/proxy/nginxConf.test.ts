@@ -5,10 +5,14 @@ import { describe, expect, it } from 'vitest'
 const conf = readFileSync(resolve(__dirname, '../../nginx.conf'), 'utf8')
 
 describe('nginx production /api routing', () => {
-  it('proxies the exact /api location to the backend service, forwarding cookies', () => {
-    expect(conf).toMatch(/location\s+\/api\s*\{[^}]*proxy_pass\s+http:\/\/backend:8080;/s)
+  it('proxies the exact /api/ prefix to the backend service, forwarding cookies', () => {
+    expect(conf).toMatch(/location\s+\/api\/\s*\{[^}]*proxy_pass\s+http:\/\/backend:8080;/s)
     expect(conf).toMatch(/proxy_set_header\s+Cookie\s+\$http_cookie;/)
     expect(conf).not.toMatch(/rewrite\s+\^\/api/)
+  })
+
+  it('does not use a bare /api prefix match that would also catch /api-docs style paths', () => {
+    expect(conf).not.toMatch(/location\s+\/api\s*\{/)
   })
 
   it('falls back to the SPA shell for any non-/api route', () => {
