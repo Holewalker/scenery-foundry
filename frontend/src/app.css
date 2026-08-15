@@ -22,3 +22,16 @@ main {
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
+
+.editor-shell {
+  display: grid;
+  grid-template-columns: 16rem 1fr;
+  height: 100vh;
+}
+
+.asset-catalog {
+  list-style: none;
+  margin: 0;
+  padding: 1rem;
+  overflow-y: auto;
+}
