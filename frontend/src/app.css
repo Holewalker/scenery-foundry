@@ -242,6 +242,11 @@ main {
   border-color: var(--color-accent);
 }
 
+.editor-toolbar button.danger:hover:not(:disabled) {
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+
 .editor-toolbar button:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
