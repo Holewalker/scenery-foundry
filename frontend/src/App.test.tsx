@@ -6,6 +6,7 @@ const loginMock = vi.fn()
 const fetchAssetsMock = vi.fn()
 const fetchSceneMock = vi.fn()
 const saveSceneMock = vi.fn()
+const confirmMock = vi.spyOn(window, 'confirm')
 vi.mock('./api/client', () => ({
   login: (...args: unknown[]) => loginMock(...args),
   fetchAssets: (...args: unknown[]) => fetchAssetsMock(...args),
@@ -32,6 +33,7 @@ beforeEach(() => {
   fetchAssetsMock.mockReset().mockResolvedValue([])
   fetchSceneMock.mockReset().mockResolvedValue({ objects: [] })
   saveSceneMock.mockReset().mockResolvedValue({ objects: [] })
+  confirmMock.mockReset().mockReturnValue(true)
   window.history.replaceState({}, '', '/?project=project-1')
 })
 
@@ -134,7 +136,7 @@ describe('App', () => {
   it('augments toolbar buttons with hidden decorative icons without changing their accessible names or text', async () => {
     await signIn()
 
-    for (const name of ['Move', 'Rotate', 'Save']) {
+    for (const name of ['Move', 'Rotate', 'Snap', 'Delete', 'Save']) {
       const button = screen.getByRole('button', { name })
       const icon = button.querySelector('svg[aria-hidden="true"]')
       expect(icon).not.toBeNull()
@@ -153,6 +155,86 @@ describe('App', () => {
     expect(viewportPanel).not.toBeNull()
     expect(within(catalogPanel as HTMLElement).getByRole('list')).toBeInTheDocument()
     expect(within(viewportPanel as HTMLElement).getByTestId('editor-canvas')).toBeInTheDocument()
-    expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual(['Move', 'Rotate', 'Save'])
+    expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual(['Move', 'Rotate', 'Snap', 'Delete', 'Save'])
+  })
+
+  it('toggles snap on and off via the Snap button', async () => {
+    await signIn()
+
+    const snapButton = screen.getByRole('button', { name: 'Snap' })
+    expect(snapButton).toHaveAttribute('aria-pressed', 'false')
+
+    fireEvent.click(snapButton)
+    expect(useEditorStore.getState().snapEnabled).toBe(true)
+    expect(snapButton).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(snapButton)
+    expect(useEditorStore.getState().snapEnabled).toBe(false)
+    expect(snapButton).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('disables the Delete button when no object is selected', async () => {
+    await signIn()
+
+    expect(screen.getByRole('button', { name: 'Delete' })).toBeDisabled()
+  })
+
+  it('leaves state unchanged when a delete is cancelled', async () => {
+    await signIn()
+    act(() => {
+      useEditorStore.getState().insert('asset-a')
+    })
+    const selectedId = useEditorStore.getState().selectedId
+    confirmMock.mockReturnValue(false)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+
+    expect(confirmMock).toHaveBeenCalledTimes(1)
+    expect(useEditorStore.getState().objects).toHaveLength(1)
+    expect(useEditorStore.getState().selectedId).toBe(selectedId)
+    expect(useEditorStore.getState().dirty).toBe(true)
+  })
+
+  it('removes the selected object when a delete is confirmed', async () => {
+    await signIn()
+    act(() => {
+      useEditorStore.getState().insert('asset-a')
+    })
+    confirmMock.mockReturnValue(true)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+
+    expect(confirmMock).toHaveBeenCalledTimes(1)
+    expect(useEditorStore.getState().objects).toHaveLength(0)
+    expect(useEditorStore.getState().selectedId).toBeNull()
+    expect(screen.getByRole('status')).toHaveTextContent('Unsaved changes')
+  })
+
+  it('enables the Delete button when an object is selected', async () => {
+    await signIn()
+    act(() => {
+      useEditorStore.getState().insert('asset-a')
+    })
+
+    expect(screen.getByRole('button', { name: 'Delete' })).not.toBeDisabled()
+  })
+
+  it('persists a confirmed delete once the user clicks Save', async () => {
+    await signIn()
+    act(() => {
+      useEditorStore.getState().insert('asset-a')
+    })
+    confirmMock.mockReturnValue(true)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+
+    expect(useEditorStore.getState().objects).toHaveLength(0)
+    expect(screen.getByRole('status')).toHaveTextContent('Unsaved changes')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(saveSceneMock).toHaveBeenCalledWith('project-1', { objects: [] }))
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Saved'))
+    expect(screen.getByRole('status')).not.toHaveTextContent('Unsaved changes')
   })
 })

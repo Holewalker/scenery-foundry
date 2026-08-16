@@ -27,6 +27,10 @@ export function App() {
   const saveError = useEditorStore((state) => state.error)
   const setSaveError = useEditorStore((state) => state.setError)
   const dirty = useEditorStore((state) => state.dirty)
+  const selectedId = useEditorStore((state) => state.selectedId)
+  const remove = useEditorStore((state) => state.remove)
+  const snapEnabled = useEditorStore((state) => state.snapEnabled)
+  const toggleSnap = useEditorStore((state) => state.toggleSnap)
 
   async function handleSave() {
     if (!projectId || saving) return
@@ -40,6 +44,12 @@ export function App() {
     } finally {
       setSaving(false)
     }
+  }
+
+  function handleDelete() {
+    if (selectedId === null) return
+    if (!window.confirm('Delete the selected object?')) return
+    remove(selectedId)
   }
 
   useEffect(() => {
@@ -123,6 +133,18 @@ export function App() {
             <path d="M8 1l3 2-3 2" />
           </svg>
           Rotate
+        </button>
+        <button type="button" aria-pressed={snapEnabled} onClick={toggleSnap}>
+          <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16">
+            <path d="M1 5h14M1 11h14M5 1v14M11 1v14" />
+          </svg>
+          Snap
+        </button>
+        <button type="button" className="danger" onClick={handleDelete} disabled={selectedId === null}>
+          <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16">
+            <path d="M2 4h12M6 4V2h4v2M4 4l1 10h6l1-10" />
+          </svg>
+          Delete
         </button>
         <button type="button" onClick={handleSave} disabled={saving}>
           <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16">
