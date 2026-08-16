@@ -35,19 +35,25 @@ class ProjectControllerTest {
     }
 
     @Test
-    void returnsNotFoundForAForeignOwnerAcrossCatalogStlAndScene() throws Exception {
+    void returnsNotFoundForAForeignOwnerOnScene() throws Exception {
         var foreign = UUID.randomUUID();
         var project = UUID.randomUUID();
-        var asset = UUID.randomUUID();
-        when(service.listAssets(foreign, project)).thenThrow(new OwnedResourceNotFoundException());
-        when(service.readOriginalStl(foreign, project, asset)).thenThrow(new OwnedResourceNotFoundException());
         when(service.loadScene(foreign, project)).thenThrow(new OwnedResourceNotFoundException());
         var user = new AuthenticatedUser(foreign, "foreign@example.com");
         var auth = new UsernamePasswordAuthenticationToken(user, null, List.of());
 
+        mvc.perform(get("/api/projects/{id}/scene", project).with(authentication(auth))).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void noLongerExposesTheLegacyProjectScopedAssetRoutes() throws Exception {
+        var project = UUID.randomUUID();
+        var asset = UUID.randomUUID();
+        var user = new AuthenticatedUser(UUID.randomUUID(), "owner@example.com");
+        var auth = new UsernamePasswordAuthenticationToken(user, null, List.of());
+
         mvc.perform(get("/api/projects/{id}/assets", project).with(authentication(auth))).andExpect(status().isNotFound());
         mvc.perform(get("/api/projects/{id}/assets/{assetId}/original", project, asset).with(authentication(auth))).andExpect(status().isNotFound());
-        mvc.perform(get("/api/projects/{id}/scene", project).with(authentication(auth))).andExpect(status().isNotFound());
     }
 
     @Test
