@@ -6,7 +6,6 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 
@@ -46,8 +45,8 @@ public class OwnedSceneService {
         if (objects.size() > MAX_SCENE_OBJECTS) throw new InvalidSceneException("scene exceeds the maximum object count");
         if (objects.stream().map(SceneDtos.SceneObjectDto::id).distinct().count() != objects.size())
             throw new InvalidSceneException("scene object ids must be unique");
-        var assetIds = repository.findAssets(projectId).stream().map(PreparedAsset::id).collect(Collectors.toSet());
-        repository.replaceScene(projectId, objects.stream().map(dto -> toDomain(projectId, assetIds, dto)).toList());
+        var readyAssetIds = repository.findReadyAssetIds(ownerId);
+        repository.replaceScene(projectId, objects.stream().map(dto -> toDomain(projectId, readyAssetIds, dto)).toList());
     }
 
     private static SceneObject toDomain(UUID projectId, Set<UUID> assetIds, SceneDtos.SceneObjectDto dto) {

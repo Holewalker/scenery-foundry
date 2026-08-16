@@ -37,7 +37,7 @@ class JdbcCaptureProjectionServiceTest {
     @Test
     void rejectsIneligibleAssetsBeforePersistingAnExport() {
         Fixture fixture = fixture();
-        scene(fixture, 1, "PENDING", "VALID_VOLUME");
+        scene(fixture, 1, "UPLOADED", "UNKNOWN");
 
         assertThatThrownBy(() -> service.capture(fixture.owner(), fixture.project())).isInstanceOf(InvalidCaptureException.class);
         assertThat(exportCount(fixture.project())).isZero();
@@ -64,10 +64,10 @@ class JdbcCaptureProjectionServiceTest {
 
     private void scene(Fixture fixture, long id, String processing, String geometry) {
         UUID asset = UUID.randomUUID();
-        jdbc.sql("insert into prepared_assets(id,project_id,processing_status,geometry_status,storage_key,original_sha256) values (:id,:project,:processing,:geometry,'asset','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')")
-            .param("id", asset).param("project", fixture.project()).param("processing", processing).param("geometry", geometry).update();
-        jdbc.sql("insert into scene_objects(id,project_id,asset_id,matrix_contract_version,translation_mm,quaternion_xyzw,scale,matrix_world_column_major) values (:id,:project,:asset,1,'{0,0,0}','{0,0,0,1}','{1,1,1}','{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1}')")
-            .param("id", id).param("project", fixture.project()).param("asset", asset).update();
+        jdbc.sql("insert into assets(id,owner_id,processing_status,geometry_status,storage_key,original_sha256) values (:id,:owner,:processing,:geometry,'asset','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')")
+            .param("id", asset).param("owner", fixture.owner()).param("processing", processing).param("geometry", geometry).update();
+        jdbc.sql("insert into scene_objects(id,project_id,owner_id,asset_id,matrix_contract_version,translation_mm,quaternion_xyzw,scale,matrix_world_column_major) values (:id,:project,:owner,:asset,1,'{0,0,0}','{0,0,0,1}','{1,1,1}','{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1}')")
+            .param("id", id).param("project", fixture.project()).param("owner", fixture.owner()).param("asset", asset).update();
     }
 
     private long exportCount(UUID project) { return jdbc.sql("select count(*) from combined_exports where project_id=:project").param("project", project).query(Long.class).single(); }

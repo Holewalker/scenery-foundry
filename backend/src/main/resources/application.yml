@@ -9,6 +9,8 @@ spring:
     password: ${DATABASE_PASSWORD:scenery-local}
   flyway:
     enabled: true
+    placeholders:
+      workerDbPassword: ${WORKER_DB_PASSWORD:geometry-worker-local}
   jpa:
     hibernate:
       ddl-auto: validate

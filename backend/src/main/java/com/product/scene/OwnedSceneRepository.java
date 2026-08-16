@@ -2,6 +2,7 @@ package com.product.scene;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 public interface OwnedSceneRepository {
@@ -11,4 +12,6 @@ public interface OwnedSceneRepository {
     Optional<PreparedAsset> findAsset(UUID projectId, UUID assetId);
     List<SceneObject> findSceneObjects(UUID projectId);
     void replaceScene(UUID projectId, List<SceneObject> objects);
+    /** Owner's asset ids with processing_status=READY, independent of geometry_status (scene-object eligibility). */
+    Set<UUID> findReadyAssetIds(UUID ownerId);
 }

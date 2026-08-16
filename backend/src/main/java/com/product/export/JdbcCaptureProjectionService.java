@@ -24,7 +24,7 @@ public class JdbcCaptureProjectionService {
     @Transactional(isolation = Isolation.READ_COMMITTED)
     public UUID capture(UUID ownerId, UUID projectId) {
         lockProject(ownerId, projectId);
-        List<CaptureObject> projection = jdbc.sql("select o.id,o.asset_id,a.storage_key,a.original_sha256,o.matrix_contract_version,o.matrix_world_column_major,a.processing_status,a.geometry_status from scene_objects o join prepared_assets a on a.project_id=o.project_id and a.id=o.asset_id where o.project_id=:project order by o.id asc")
+        List<CaptureObject> projection = jdbc.sql("select o.id,o.asset_id,a.storage_key,a.original_sha256,o.matrix_contract_version,o.matrix_world_column_major,a.processing_status,a.geometry_status from scene_objects o join assets a on a.id=o.asset_id and a.owner_id=o.owner_id where o.project_id=:project order by o.id asc")
             .param("project", projectId).query((row, index) -> map(row.getLong("id"), row.getObject("asset_id", UUID.class),
                 row.getString("storage_key"), row.getString("original_sha256"), row.getInt("matrix_contract_version"), row.getArray("matrix_world_column_major"),
                 row.getString("processing_status"), row.getString("geometry_status"))).list();
