@@ -3,12 +3,20 @@ package com.product.scene;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import com.product.storage.StorageResolver;
 
 class OwnedSceneServiceTest {
+    private static final StorageResolver UNUSED_STORAGE = new StorageResolver(Path.of(System.getProperty("java.io.tmpdir")));
     private final UUID ownerA = UUID.randomUUID();
     private final UUID ownerB = UUID.randomUUID();
     private final UUID projectId = UUID.randomUUID();
@@ -16,7 +24,7 @@ class OwnedSceneServiceTest {
 
     @Test
     void hidesOtherOwnersProjectsAndKeepsOwnersScenesAvailable() {
-        var service = new OwnedSceneService(new InMemoryOwnedSceneRepository());
+        var service = new OwnedSceneService(new InMemoryOwnedSceneRepository(), UNUSED_STORAGE);
         service.createProject(new Project(projectId, ownerA));
 
         assertThat(service.findProject(ownerA, projectId)).isEqualTo(new Project(projectId, ownerA));
@@ -50,7 +58,7 @@ class OwnedSceneServiceTest {
     @Test
     void rejectsSceneObjectWhenTranslationMmDoesNotMatchMatrixTranslation() {
         var repository = new InMemoryOwnedSceneRepository();
-        var service = new OwnedSceneService(repository);
+        var service = new OwnedSceneService(repository, UNUSED_STORAGE);
         service.createProject(new Project(projectId, ownerA));
         repository.saveAsset(new PreparedAsset(assetId, projectId, AssetProcessingStatus.READY,
             AssetGeometryStatus.VALID_VOLUME, "assets/a.stl", "a".repeat(64)));
@@ -70,7 +78,7 @@ class OwnedSceneServiceTest {
     @Test
     void acceptsReadyAssetsRegardlessOfGeometryStatusAndRejectsNonReadyAssets() {
         var repository = new InMemoryOwnedSceneRepository();
-        var service = new OwnedSceneService(repository);
+        var service = new OwnedSceneService(repository, UNUSED_STORAGE);
         service.createProject(new Project(projectId, ownerA));
         repository.markAssetReady(assetId);
 
@@ -89,11 +97,41 @@ class OwnedSceneServiceTest {
 
     @Test
     void rejectsNullSceneObjectsInsteadOfThrowingNullPointerException() {
-        var service = new OwnedSceneService(new InMemoryOwnedSceneRepository());
+        var service = new OwnedSceneService(new InMemoryOwnedSceneRepository(), UNUSED_STORAGE);
         service.createProject(new Project(projectId, ownerA));
 
         assertThatThrownBy(() -> service.replaceScene(ownerA, projectId, new SceneDtos.SceneDto(null)))
             .isInstanceOf(InvalidSceneException.class);
+    }
+
+    @Test
+    void readsStoredOriginalBytesAndHidesTraversalOrMissingAssetsAsNotFound(@TempDir Path storageRoot) throws IOException {
+        var storage = new StorageResolver(storageRoot);
+        var repository = new InMemoryOwnedSceneRepository();
+        var service = new OwnedSceneService(repository, storage);
+        service.createProject(new Project(projectId, ownerA));
+
+        var storedBytes = "solid cube".getBytes(StandardCharsets.UTF_8);
+        var storageKey = storage.allocateKey("assets/" + assetId, "cube.stl");
+        var tempSource = Files.createTempFile(storageRoot, "upload", ".tmp");
+        Files.write(tempSource, storedBytes);
+        storage.publish(tempSource, storageKey);
+        repository.saveAsset(new PreparedAsset(assetId, projectId, AssetProcessingStatus.READY,
+            AssetGeometryStatus.VALID_VOLUME, storageKey, "a".repeat(64)));
+
+        assertThat(service.readOriginalStl(ownerA, projectId, assetId)).isEqualTo(storedBytes);
+
+        var traversalAssetId = UUID.randomUUID();
+        repository.saveAsset(new PreparedAsset(traversalAssetId, projectId, AssetProcessingStatus.READY,
+            AssetGeometryStatus.VALID_VOLUME, "../outside.stl", "b".repeat(64)));
+        assertThatThrownBy(() -> service.readOriginalStl(ownerA, projectId, traversalAssetId))
+            .isInstanceOf(OwnedResourceNotFoundException.class);
+
+        var missingAssetId = UUID.randomUUID();
+        repository.saveAsset(new PreparedAsset(missingAssetId, projectId, AssetProcessingStatus.READY,
+            AssetGeometryStatus.VALID_VOLUME, "assets/does-not-exist.stl", "c".repeat(64)));
+        assertThatThrownBy(() -> service.readOriginalStl(ownerA, projectId, missingAssetId))
+            .isInstanceOf(OwnedResourceNotFoundException.class);
     }
 
     @Test
