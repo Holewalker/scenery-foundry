@@ -1,6 +1,6 @@
 import { Euler, MathUtils, Quaternion } from 'three'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { resetEditorStore, useEditorStore } from './store'
+import { hasPendingAssets, resetEditorStore, useEditorStore } from './store'
 
 const identityQuaternion: [number, number, number, number] = [0, 0, 0, 1]
 
@@ -99,5 +99,22 @@ describe('editor store', () => {
     expect(useEditorStore.getState().dirty).toBe(false)
     expect(useEditorStore.getState().selectedId).toBeNull()
     expect(useEditorStore.getState().insert('asset-c')).toBe(6)
+  })
+})
+
+describe('hasPendingAssets', () => {
+  it('reports pending when any asset is still UPLOADED or PROCESSING', () => {
+    expect(hasPendingAssets([{ id: 'a', processingStatus: 'UPLOADED' }])).toBe(true)
+    expect(hasPendingAssets([{ id: 'a', processingStatus: 'PROCESSING' }])).toBe(true)
+  })
+
+  it('reports no pending work once every asset has settled into READY or FAILED', () => {
+    expect(hasPendingAssets([])).toBe(false)
+    expect(
+      hasPendingAssets([
+        { id: 'a', processingStatus: 'READY' },
+        { id: 'b', processingStatus: 'FAILED' },
+      ]),
+    ).toBe(false)
   })
 })

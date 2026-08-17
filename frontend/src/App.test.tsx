@@ -6,12 +6,14 @@ const loginMock = vi.fn()
 const fetchAssetsMock = vi.fn()
 const fetchSceneMock = vi.fn()
 const saveSceneMock = vi.fn()
+const uploadAssetMock = vi.fn()
 const confirmMock = vi.spyOn(window, 'confirm')
 vi.mock('./api/client', () => ({
   login: (...args: unknown[]) => loginMock(...args),
   fetchAssets: (...args: unknown[]) => fetchAssetsMock(...args),
   fetchScene: (...args: unknown[]) => fetchSceneMock(...args),
   saveScene: (...args: unknown[]) => saveSceneMock(...args),
+  uploadAsset: (...args: unknown[]) => uploadAssetMock(...args),
 }))
 vi.mock('./editor/EditorCanvas', () => ({
   EditorCanvas: () => <div data-testid="editor-canvas" />,
@@ -33,6 +35,7 @@ beforeEach(() => {
   fetchAssetsMock.mockReset().mockResolvedValue([])
   fetchSceneMock.mockReset().mockResolvedValue({ objects: [] })
   saveSceneMock.mockReset().mockResolvedValue({ objects: [] })
+  uploadAssetMock.mockReset()
   confirmMock.mockReset().mockReturnValue(true)
   window.history.replaceState({}, '', '/?project=project-1')
 })
@@ -67,7 +70,7 @@ describe('App', () => {
 
     await waitFor(() => expect(screen.getByTestId('editor-canvas')).toBeInTheDocument())
     expect(loginMock).toHaveBeenCalledWith('owner@example.com', 'secret')
-    await waitFor(() => expect(fetchAssetsMock).toHaveBeenCalledWith('project-1'))
+    await waitFor(() => expect(fetchAssetsMock).toHaveBeenCalledWith())
     await waitFor(() => expect(fetchSceneMock).toHaveBeenCalledWith('project-1'))
   })
 

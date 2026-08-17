@@ -4,14 +4,25 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetEditorStore, useEditorStore } from './store'
 import { EditorCanvas } from './EditorCanvas'
 
-const fetchAssetStlMock = vi.fn()
-vi.mock('../api/client', () => ({ fetchAssetStl: (...args: unknown[]) => fetchAssetStlMock(...args) }))
+const fetchAssetPreviewMock = vi.fn()
+vi.mock('../api/client', () => ({ fetchAssetPreview: (...args: unknown[]) => fetchAssetPreviewMock(...args) }))
 
-const parseSpy = vi.fn((buffer: unknown) => ({ buffer }))
-vi.mock('three/examples/jsm/loaders/STLLoader.js', () => ({
-  STLLoader: class {
-    parse(buffer: unknown) {
-      return parseSpy(buffer)
+// Fakes the GLTF scene graph shape a real GLTFLoader.parseAsync would resolve: a root scene
+// Group whose descendants include exactly one Mesh (matching trimesh's plain, un-nested export).
+function fakeGltfScene(geometry: unknown) {
+  const mesh = { isMesh: true, geometry }
+  return {
+    scene: {
+      traverse: (callback: (object: unknown) => void) => callback(mesh),
+    },
+  }
+}
+
+const parseAsyncSpy = vi.fn((buffer: unknown, _path: string) => Promise.resolve(fakeGltfScene({ buffer })))
+vi.mock('three/examples/jsm/loaders/GLTFLoader.js', () => ({
+  GLTFLoader: class {
+    parseAsync(buffer: unknown, path: string) {
+      return parseAsyncSpy(buffer, path)
     }
   },
 }))
@@ -34,10 +45,10 @@ vi.mock('@react-three/drei', () => ({
 
 beforeEach(() => {
   resetEditorStore()
-  fetchAssetStlMock.mockReset().mockResolvedValue(new ArrayBuffer(0))
+  fetchAssetPreviewMock.mockReset().mockResolvedValue(new ArrayBuffer(0))
   orbitSpy.mockReset()
   transformSpy.mockReset()
-  parseSpy.mockClear()
+  parseAsyncSpy.mockClear().mockImplementation((buffer: unknown) => Promise.resolve(fakeGltfScene({ buffer })))
 })
 
 // The mocked TransformControls renders the real <mesh> child directly into the DOM (no R3F
@@ -58,34 +69,53 @@ function stubMeshTransform(
 }
 
 describe('EditorCanvas', () => {
-  it('fetches the authenticated STL bytes for a scene object and parses the exact fetched bytes for rendering', async () => {
+  it('fetches the published GLB preview for a scene object and parses the exact fetched bytes for rendering', async () => {
     const buffer = new ArrayBuffer(8)
-    fetchAssetStlMock.mockResolvedValue(buffer)
+    fetchAssetPreviewMock.mockResolvedValue(buffer)
     useEditorStore.getState().insert('asset-1')
 
-    render(<EditorCanvas projectId="project-1" />)
+    render(<EditorCanvas />)
 
-    await waitFor(() => expect(fetchAssetStlMock).toHaveBeenCalledWith('project-1', 'asset-1'))
-    await waitFor(() => expect(parseSpy).toHaveBeenCalledWith(buffer))
+    await waitFor(() => expect(fetchAssetPreviewMock).toHaveBeenCalledWith('asset-1'))
+    await waitFor(() => expect(parseAsyncSpy).toHaveBeenCalledWith(buffer, ''))
   })
 
-  it('routes a rejected STL fetch into the editor error state instead of an unhandled rejection', async () => {
-    fetchAssetStlMock.mockRejectedValue(new Error('network down'))
+  it('never fetches the raw original.stl bytes for viewport rendering', async () => {
     useEditorStore.getState().insert('asset-1')
 
-    render(<EditorCanvas projectId="project-1" />)
+    render(<EditorCanvas />)
+
+    await waitFor(() => expect(fetchAssetPreviewMock).toHaveBeenCalled())
+    for (const call of fetchAssetPreviewMock.mock.calls) {
+      expect(String(call[0])).not.toMatch(/original/)
+    }
+  })
+
+  it('extracts the first Mesh geometry out of the parsed GLTF scene graph', async () => {
+    const geometry = { isBufferGeometry: true }
+    parseAsyncSpy.mockResolvedValueOnce(fakeGltfScene(geometry))
+    useEditorStore.getState().insert('asset-1')
+
+    const { container } = render(<EditorCanvas />)
+
+    await waitFor(() => expect(container.querySelector('mesh')).not.toBeNull())
+  })
+
+  it('routes a rejected preview fetch into the editor error state instead of an unhandled rejection', async () => {
+    fetchAssetPreviewMock.mockRejectedValue(new Error('network down'))
+    useEditorStore.getState().insert('asset-1')
+
+    render(<EditorCanvas />)
 
     await waitFor(() => expect(useEditorStore.getState().error).not.toBeNull())
-    expect(parseSpy).not.toHaveBeenCalled()
+    expect(parseAsyncSpy).not.toHaveBeenCalled()
   })
 
-  it('routes an STLLoader.parse failure into the editor error state', async () => {
-    parseSpy.mockImplementationOnce(() => {
-      throw new Error('malformed geometry')
-    })
+  it('routes a GLTFLoader.parseAsync failure into the editor error state', async () => {
+    parseAsyncSpy.mockRejectedValueOnce(new Error('malformed glb'))
     useEditorStore.getState().insert('asset-1')
 
-    render(<EditorCanvas projectId="project-1" />)
+    render(<EditorCanvas />)
 
     await waitFor(() => expect(useEditorStore.getState().error).not.toBeNull())
   })
@@ -94,7 +124,7 @@ describe('EditorCanvas', () => {
     const id = useEditorStore.getState().insert('asset-1')
     useEditorStore.getState().select(id)
 
-    const { container } = render(<EditorCanvas projectId="project-1" />)
+    const { container } = render(<EditorCanvas />)
     await waitFor(() => expect(transformSpy).toHaveBeenCalled())
     stubMeshTransform(container)
 
@@ -110,7 +140,7 @@ describe('EditorCanvas', () => {
     const id = useEditorStore.getState().insert('asset-1')
     useEditorStore.getState().select(id)
 
-    const { container } = render(<EditorCanvas projectId="project-1" />)
+    const { container } = render(<EditorCanvas />)
     await waitFor(() => expect(transformSpy).toHaveBeenCalled())
     stubMeshTransform(container, [10, 20, 30], [0, 0, 0, 1])
 
@@ -136,7 +166,7 @@ describe('EditorCanvas', () => {
     const id = useEditorStore.getState().insert('asset-1')
     useEditorStore.getState().select(id)
 
-    const { container } = render(<EditorCanvas projectId="project-1" />)
+    const { container } = render(<EditorCanvas />)
     await waitFor(() => expect(transformSpy).toHaveBeenCalled())
 
     expect(container.querySelectorAll('gridHelper').length).toBeGreaterThan(0)
@@ -154,7 +184,7 @@ describe('EditorCanvas', () => {
     const id = useEditorStore.getState().insert('asset-1')
     useEditorStore.getState().select(id)
 
-    render(<EditorCanvas projectId="project-1" />)
+    render(<EditorCanvas />)
     await waitFor(() => expect(transformSpy).toHaveBeenCalled())
 
     const callsBefore = transformSpy.mock.calls.length
@@ -173,7 +203,7 @@ describe('EditorCanvas', () => {
     useEditorStore.getState().select(id)
     useEditorStore.getState().setMode('rotate')
 
-    render(<EditorCanvas projectId="project-1" />)
+    render(<EditorCanvas />)
     await waitFor(() => expect(transformSpy).toHaveBeenCalled())
 
     const props = transformSpy.mock.calls.at(-1)?.[0] as { mode: string }
