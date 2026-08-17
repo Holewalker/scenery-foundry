@@ -25,6 +25,8 @@ services:
       DATABASE_USER: ${POSTGRES_USER:-scenery}
       DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-scenery-local}
       SESSION_COOKIE_SECURE: "false"
+      WORKER_DB_PASSWORD: ${WORKER_DB_PASSWORD:-geometry-worker-local}
+      APP_GEOMETRYJOB_SCHEDULING_ENABLED: "true"
     volumes:
       - ./data:/data
     ports:
@@ -42,6 +44,12 @@ services:
   geometry-worker:
     build:
       context: ./geometry-worker
+    environment:
+      WORKER_DATABASE_URL: postgresql://geometry_worker:${WORKER_DB_PASSWORD:-geometry-worker-local}@postgres:5432/${POSTGRES_DB:-scenery_foundry}
+      GEOMETRY_DATA_ROOT: /data
+      WORKER_LEASE_SECONDS: "120"
+      WORKER_HEARTBEAT_SECONDS: "30"
+      WORKER_POLL_SECONDS: "2"
     volumes:
       - ./data:/data
     depends_on:
