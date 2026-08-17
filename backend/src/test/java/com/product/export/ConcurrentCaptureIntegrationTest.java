@@ -48,7 +48,7 @@ class ConcurrentCaptureIntegrationTest {
         try (Connection connection = dataSource.getConnection(); var pool = Executors.newSingleThreadExecutor()) {
             connection.setAutoCommit(false);
             connection.prepareStatement("select id from projects where id='" + fixture.project() + "' for update").execute();
-            connection.prepareStatement("update prepared_assets set storage_key='after' where project_id='" + fixture.project() + "'").executeUpdate();
+            connection.prepareStatement("update assets set storage_key='after' where owner_id='" + fixture.owner() + "'").executeUpdate();
             var capture = pool.submit(() -> captures.capture(fixture.owner(), fixture.project()));
             assertThat(capture.isDone()).isFalse();
             connection.commit();
@@ -62,8 +62,8 @@ class ConcurrentCaptureIntegrationTest {
         UUID owner = UUID.randomUUID(); UUID project = UUID.randomUUID(); UUID asset = UUID.randomUUID();
         jdbc.sql("insert into users(id,email,password_hash) values (:id,:email,'hash')").param("id", owner).param("email", owner + "@example.com").update();
         jdbc.sql("insert into projects(id,owner_id) values (:id,:owner)").param("id", project).param("owner", owner).update();
-        jdbc.sql("insert into prepared_assets(id,project_id,processing_status,geometry_status,storage_key,original_sha256) values (:id,:project,'READY','VALID_VOLUME',:storage,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')").param("id", asset).param("project", project).param("storage", storageKey).update();
-        jdbc.sql("insert into scene_objects(id,project_id,asset_id,matrix_contract_version,translation_mm,quaternion_xyzw,scale,matrix_world_column_major) values (1,:project,:asset,1,'{0,0,0}','{0,0,0,1}','{1,1,1}','{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1}')").param("project", project).param("asset", asset).update();
+        jdbc.sql("insert into assets(id,owner_id,processing_status,geometry_status,storage_key,original_sha256) values (:id,:owner,'READY','VALID_VOLUME',:storage,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')").param("id", asset).param("owner", owner).param("storage", storageKey).update();
+        jdbc.sql("insert into scene_objects(id,project_id,owner_id,asset_id,matrix_contract_version,translation_mm,quaternion_xyzw,scale,matrix_world_column_major) values (1,:project,:owner,:asset,1,'{0,0,0}','{0,0,0,1}','{1,1,1}','{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1}')").param("project", project).param("owner", owner).param("asset", asset).update();
         return new Fixture(owner, project);
     }
 

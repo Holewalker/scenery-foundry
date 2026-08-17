@@ -39,7 +39,7 @@ class OwnedSceneServiceTest {
             AssetGeometryStatus.VALID_VOLUME, "assets/a.stl", "a".repeat(64));
 
         assertThat(valid).isNotNull();
-        assertThatThrownBy(() -> new PreparedAsset(assetId, projectId, AssetProcessingStatus.PENDING,
+        assertThatThrownBy(() -> new PreparedAsset(assetId, projectId, AssetProcessingStatus.UPLOADED,
             AssetGeometryStatus.VALID_VOLUME, "assets/a.stl", "a".repeat(64)))
             .isInstanceOf(InvalidSceneException.class);
         assertThatThrownBy(() -> new PreparedAsset(assetId, projectId, AssetProcessingStatus.READY,
@@ -64,6 +64,26 @@ class OwnedSceneServiceTest {
         var consistent = new SceneDtos.SceneObjectDto(1, assetId, 1,
             new double[] {0, 0, 0}, new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}, identity());
         service.replaceScene(ownerA, projectId, new SceneDtos.SceneDto(List.of(consistent)));
+        assertThat(service.loadScene(ownerA, projectId).objects()).hasSize(1);
+    }
+
+    @Test
+    void acceptsReadyAssetsRegardlessOfGeometryStatusAndRejectsNonReadyAssets() {
+        var repository = new InMemoryOwnedSceneRepository();
+        var service = new OwnedSceneService(repository);
+        service.createProject(new Project(projectId, ownerA));
+        repository.markAssetReady(assetId);
+
+        var invalidVolumeButReady = new SceneDtos.SceneObjectDto(1, assetId, 1,
+            new double[] {0, 0, 0}, new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}, identity());
+        service.replaceScene(ownerA, projectId, new SceneDtos.SceneDto(List.of(invalidVolumeButReady)));
+        assertThat(service.loadScene(ownerA, projectId).objects()).hasSize(1);
+
+        var notReadyAssetId = UUID.randomUUID();
+        var notReady = new SceneDtos.SceneObjectDto(2, notReadyAssetId, 1,
+            new double[] {0, 0, 0}, new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}, identity());
+        assertThatThrownBy(() -> service.replaceScene(ownerA, projectId, new SceneDtos.SceneDto(List.of(notReady))))
+            .isInstanceOf(InvalidSceneException.class);
         assertThat(service.loadScene(ownerA, projectId).objects()).hasSize(1);
     }
 

@@ -3,21 +3,29 @@ package com.product.scene;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 public final class InMemoryOwnedSceneRepository implements OwnedSceneRepository {
     private final Map<UUID, Project> projects = new HashMap<>();
     private final Map<UUID, List<PreparedAsset>> assets = new HashMap<>();
     private final Map<UUID, List<SceneObject>> scenes = new HashMap<>();
+    private final Set<UUID> readyAssetIds = new HashSet<>();
 
     @Override public void save(Project project) { projects.put(project.id(), project); }
     @Override public Optional<Project> findProjectByOwner(UUID ownerId, UUID projectId) {
         return Optional.ofNullable(projects.get(projectId)).filter(project -> project.ownerId().equals(ownerId));
     }
-    public void saveAsset(PreparedAsset asset) { assets.computeIfAbsent(asset.projectId(), key -> new ArrayList<>()).add(asset); }
+    public void saveAsset(PreparedAsset asset) {
+        assets.computeIfAbsent(asset.projectId(), key -> new ArrayList<>()).add(asset);
+        readyAssetIds.add(asset.id());
+    }
+    /** Marks READY without PreparedAsset's VALID_VOLUME invariant — models DB eligibility regardless of geometry_status. */
+    public void markAssetReady(UUID assetId) { readyAssetIds.add(assetId); }
     @Override public List<PreparedAsset> findAssets(UUID projectId) {
         return assets.getOrDefault(projectId, List.of()).stream().sorted(Comparator.comparing(PreparedAsset::id)).toList();
     }
@@ -28,4 +36,5 @@ public final class InMemoryOwnedSceneRepository implements OwnedSceneRepository 
         return scenes.getOrDefault(projectId, List.of()).stream().sorted(Comparator.comparing(object -> object.id().value())).toList();
     }
     @Override public void replaceScene(UUID projectId, List<SceneObject> objects) { scenes.put(projectId, List.copyOf(objects)); }
+    @Override public Set<UUID> findReadyAssetIds(UUID ownerId) { return Set.copyOf(readyAssetIds); }
 }
