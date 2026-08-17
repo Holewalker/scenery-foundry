@@ -45,16 +45,30 @@ export async function login(email: string, password: string): Promise<void> {
   if (!response.ok) throw new Error('login failed')
 }
 
-export async function fetchAssets(projectId: string): Promise<AssetSummary[]> {
-  const response = await apiFetch(`/api/projects/${projectId}/assets`)
+export async function fetchAssets(): Promise<AssetSummary[]> {
+  const response = await apiFetch('/api/assets')
   if (!response.ok) throw new Error('failed to fetch assets')
   return response.json() as Promise<AssetSummary[]>
 }
 
-export async function fetchAssetStl(projectId: string, assetId: string): Promise<ArrayBuffer> {
-  const response = await apiFetch(`/api/projects/${projectId}/assets/${assetId}/original`)
-  if (!response.ok) throw new Error('failed to fetch asset geometry')
+export async function fetchAssetPreview(assetId: string): Promise<ArrayBuffer> {
+  const response = await apiFetch(`/api/assets/${assetId}/preview`)
+  if (!response.ok) throw new Error('failed to fetch asset preview')
   return response.arrayBuffer()
+}
+
+export interface AssetIntakeResult {
+  assetId: string
+  processingStatus: AssetSummary['processingStatus']
+  jobId: string
+}
+
+export async function uploadAsset(file: File): Promise<AssetIntakeResult> {
+  const body = new FormData()
+  body.append('file', file)
+  const response = await apiFetch('/api/assets', { method: 'POST', body })
+  if (!response.ok) throw new Error('failed to upload asset')
+  return response.json() as Promise<AssetIntakeResult>
 }
 
 export async function fetchScene(projectId: string): Promise<SceneDto> {

@@ -4,8 +4,15 @@ import { create } from 'zustand'
 export type Vec3 = [number, number, number]
 export type Vec4 = [number, number, number, number]
 
+export type AssetProcessingStatus = 'UPLOADED' | 'PROCESSING' | 'READY' | 'FAILED'
+
 export interface AssetSummary {
   id: string
+  processingStatus: AssetProcessingStatus
+}
+
+export function hasPendingAssets(assets: AssetSummary[]): boolean {
+  return assets.some((asset) => asset.processingStatus === 'UPLOADED' || asset.processingStatus === 'PROCESSING')
 }
 
 export interface SceneObjectDto {

@@ -1,20 +1,33 @@
-import { fireEvent, render, screen } from '@testing-library/react'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { act, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetEditorStore, useEditorStore } from './store'
 import { AssetCatalog } from './AssetCatalog'
 
-beforeEach(() => resetEditorStore())
+const fetchAssetsMock = vi.fn()
+vi.mock('../api/client', () => ({ fetchAssets: (...args: unknown[]) => fetchAssetsMock(...args) }))
+
+beforeEach(() => {
+  resetEditorStore()
+  fetchAssetsMock.mockReset()
+})
 
 describe('AssetCatalog', () => {
   it('renders the catalog assets in the given order', () => {
-    render(<AssetCatalog assets={[{ id: 'asset-a' }, { id: 'asset-b' }]} />)
+    render(
+      <AssetCatalog
+        assets={[
+          { id: 'asset-a', processingStatus: 'READY' },
+          { id: 'asset-b', processingStatus: 'READY' },
+        ]}
+      />,
+    )
 
     const buttons = screen.getAllByRole('button')
-    expect(buttons.map((button) => button.textContent)).toEqual(['asset-a', 'asset-b'])
+    expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual(['asset-a', 'asset-b'])
   })
 
-  it('inserts and selects a new object into the store when an asset is chosen', () => {
-    render(<AssetCatalog assets={[{ id: 'asset-a' }]} />)
+  it('inserts and selects a new object into the store when a READY asset is chosen', () => {
+    render(<AssetCatalog assets={[{ id: 'asset-a', processingStatus: 'READY' }]} />)
 
     fireEvent.click(screen.getByRole('button', { name: 'asset-a' }))
 
@@ -24,8 +37,15 @@ describe('AssetCatalog', () => {
     expect(state.selectedId).toBe(state.objects[0]?.id)
   })
 
-  it('decorates each asset button with a hidden icon without changing its text content or button count', () => {
-    render(<AssetCatalog assets={[{ id: 'asset-a' }, { id: 'asset-b' }]} />)
+  it('decorates each asset button with a hidden icon without changing its accessible name or button count', () => {
+    render(
+      <AssetCatalog
+        assets={[
+          { id: 'asset-a', processingStatus: 'READY' },
+          { id: 'asset-b', processingStatus: 'READY' },
+        ]}
+      />,
+    )
 
     const buttons = screen.getAllByRole('button')
     expect(buttons).toHaveLength(2)
@@ -35,6 +55,91 @@ describe('AssetCatalog', () => {
     expect(icon).not.toBeNull()
     expect(firstButton.querySelector('title')).toBeNull()
     expect(firstButton.querySelector('desc')).toBeNull()
-    expect(firstButton.textContent).toBe('asset-a')
+    expect(firstButton).toHaveAttribute('aria-label', 'asset-a')
+  })
+
+  it('disables inserting a non-READY asset and still shows it with a status badge', () => {
+    render(<AssetCatalog assets={[{ id: 'asset-a', processingStatus: 'UPLOADED' }]} />)
+
+    const button = screen.getByRole('button', { name: 'asset-a' })
+    expect(button).toBeDisabled()
+    expect(button).toHaveTextContent('UPLOADED')
+
+    fireEvent.click(button)
+    expect(useEditorStore.getState().objects).toHaveLength(0)
+  })
+
+  it('shows a distinct status badge matching each asset processing state', () => {
+    render(
+      <AssetCatalog
+        assets={[
+          { id: 'asset-a', processingStatus: 'READY' },
+          { id: 'asset-b', processingStatus: 'PROCESSING' },
+          { id: 'asset-c', processingStatus: 'FAILED' },
+        ]}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: 'asset-a' })).toHaveTextContent('READY')
+    expect(screen.getByRole('button', { name: 'asset-b' })).toHaveTextContent('PROCESSING')
+    expect(screen.getByRole('button', { name: 'asset-c' })).toHaveTextContent('FAILED')
+  })
+})
+
+describe('AssetCatalog polling', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('polls the catalog every 3 seconds while any asset is UPLOADED or PROCESSING, and applies the refreshed catalog to the store', async () => {
+    fetchAssetsMock.mockResolvedValue([{ id: 'asset-a', processingStatus: 'READY' }])
+    render(<AssetCatalog assets={[{ id: 'asset-a', processingStatus: 'UPLOADED' }]} />)
+
+    expect(fetchAssetsMock).not.toHaveBeenCalled()
+
+    await act(async () => {
+      vi.advanceTimersByTime(3000)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(fetchAssetsMock).toHaveBeenCalledTimes(1)
+    expect(useEditorStore.getState().assets).toEqual([{ id: 'asset-a', processingStatus: 'READY' }])
+
+    await act(async () => {
+      vi.advanceTimersByTime(3000)
+      await Promise.resolve()
+    })
+    expect(fetchAssetsMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('never polls when every asset has already settled into READY or FAILED', () => {
+    render(<AssetCatalog assets={[{ id: 'asset-a', processingStatus: 'READY' }]} />)
+
+    act(() => {
+      vi.advanceTimersByTime(10000)
+    })
+
+    expect(fetchAssetsMock).not.toHaveBeenCalled()
+  })
+
+  it('stops polling once a re-render reports every asset has settled', () => {
+    fetchAssetsMock.mockResolvedValue([{ id: 'asset-a', processingStatus: 'READY' }])
+    const { rerender } = render(<AssetCatalog assets={[{ id: 'asset-a', processingStatus: 'UPLOADED' }]} />)
+
+    act(() => {
+      vi.advanceTimersByTime(3000)
+    })
+    expect(fetchAssetsMock).toHaveBeenCalledTimes(1)
+
+    rerender(<AssetCatalog assets={[{ id: 'asset-a', processingStatus: 'READY' }]} />)
+
+    act(() => {
+      vi.advanceTimersByTime(10000)
+    })
+    expect(fetchAssetsMock).toHaveBeenCalledTimes(1)
   })
 })

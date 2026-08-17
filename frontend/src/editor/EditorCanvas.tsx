@@ -1,24 +1,35 @@
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls, TransformControls } from '@react-three/drei'
 import { memo, useEffect, useRef, useState } from 'react'
-import type { BufferGeometry, Mesh } from 'three'
-import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
-import { fetchAssetStl } from '../api/client'
+import type { BufferGeometry, Mesh, Object3D } from 'three'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { fetchAssetPreview } from '../api/client'
 import type { EditorObject, Vec3, Vec4 } from './store'
 import { useEditorStore } from './store'
 
-interface EditorCanvasProps {
-  projectId: string
+// GLTFLoader.parseAsync resolves a full scene graph (unlike STLLoader.parse's single
+// BufferGeometry), so the editor keeps rendering a single <mesh> by extracting the first
+// Mesh found anywhere in that graph — matching the worker's plain, un-nested GLB export.
+function firstMeshGeometry(root: Object3D): BufferGeometry | null {
+  let found: Mesh | null = null
+  root.traverse((child) => {
+    if (!found && (child as Mesh).isMesh) found = child as Mesh
+  })
+  return found ? (found as Mesh).geometry : null
 }
 
-function useObjectGeometry(projectId: string, assetId: string): BufferGeometry | null {
+function useObjectGeometry(assetId: string): BufferGeometry | null {
   const [geometry, setGeometry] = useState<BufferGeometry | null>(null)
   const setError = useEditorStore((state) => state.setError)
   useEffect(() => {
     let cancelled = false
-    fetchAssetStl(projectId, assetId)
-      .then((buffer) => {
-        if (!cancelled) setGeometry(new STLLoader().parse(buffer))
+    fetchAssetPreview(assetId)
+      .then((buffer) => new GLTFLoader().parseAsync(buffer, ''))
+      .then((gltf) => {
+        if (cancelled) return
+        const meshGeometry = firstMeshGeometry(gltf.scene)
+        if (!meshGeometry) throw new Error('preview.glb scene graph contains no mesh')
+        setGeometry(meshGeometry)
       })
       .catch(() => {
         if (!cancelled) setError('Failed to load object geometry.')
@@ -26,7 +37,7 @@ function useObjectGeometry(projectId: string, assetId: string): BufferGeometry |
     return () => {
       cancelled = true
     }
-  }, [projectId, assetId, setError])
+  }, [assetId, setError])
   return geometry
 }
 
@@ -37,14 +48,8 @@ function useObjectGeometry(projectId: string, assetId: string): BufferGeometry |
 // identity, see @react-three/drei/core/TransformControls.js) detaches and reattaches the real
 // three-stdlib controls — clearing its tracked drag axis mid-gesture and, since that axis also
 // gates the mouseUp dispatch, intermittently leaving orbit controls disabled after mouseup.
-const EditorObjectMesh = memo(function EditorObjectMesh({
-  projectId,
-  object,
-}: {
-  projectId: string
-  object: EditorObject
-}) {
-  const geometry = useObjectGeometry(projectId, object.assetId)
+const EditorObjectMesh = memo(function EditorObjectMesh({ object }: { object: EditorObject }) {
+  const geometry = useObjectGeometry(object.assetId)
   const meshRef = useRef<Mesh>(null)
   const selectedId = useEditorStore((state) => state.selectedId)
   const mode = useEditorStore((state) => state.mode)
@@ -97,7 +102,7 @@ const EditorObjectMesh = memo(function EditorObjectMesh({
   )
 })
 
-export function EditorCanvas({ projectId }: EditorCanvasProps) {
+export function EditorCanvas() {
   const objects = useEditorStore((state) => state.objects)
   const orbitEnabled = useEditorStore((state) => state.orbitEnabled)
 
@@ -111,7 +116,7 @@ export function EditorCanvas({ projectId }: EditorCanvasProps) {
       <gridHelper args={[2000, 20, '#3a4b56', '#22303a']} />
       <gridHelper args={[200, 20, '#4d616d', '#2a3944']} />
       {objects.map((object) => (
-        <EditorObjectMesh key={object.id} projectId={projectId} object={object} />
+        <EditorObjectMesh key={object.id} object={object} />
       ))}
       <OrbitControls enabled={orbitEnabled} />
     </Canvas>
