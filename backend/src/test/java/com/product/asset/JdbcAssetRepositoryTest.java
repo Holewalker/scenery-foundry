@@ -46,6 +46,24 @@ class JdbcAssetRepositoryTest {
         assertThat(repository.findCatalogForOwner(owner)).hasSize(1);
     }
 
+    @Test
+    void findByOwnerAndIdReturnsTheEntryOnlyForItsOwningOwner() {
+        UUID owner = insertUser();
+        UUID stranger = insertUser();
+        UUID assetId = insertAsset(owner, "READY", "VALID_VOLUME");
+
+        assertThat(repository.findByOwnerAndId(owner, assetId)).isPresent()
+            .get().extracting(AssetCatalogEntry::id).isEqualTo(assetId);
+        assertThat(repository.findByOwnerAndId(stranger, assetId)).isEmpty();
+    }
+
+    @Test
+    void findByOwnerAndIdReturnsEmptyForAMissingAsset() {
+        UUID owner = insertUser();
+
+        assertThat(repository.findByOwnerAndId(owner, UUID.randomUUID())).isEmpty();
+    }
+
     private UUID insertUser() {
         var id = UUID.randomUUID();
         jdbc.sql("insert into users(id,email,password_hash) values (:id,:email,'hash')")
@@ -53,9 +71,11 @@ class JdbcAssetRepositoryTest {
         return id;
     }
 
-    private void insertAsset(UUID owner, String processing, String geometry) {
+    private UUID insertAsset(UUID owner, String processing, String geometry) {
+        UUID id = UUID.randomUUID();
         jdbc.sql("insert into assets(id,owner_id,processing_status,geometry_status,storage_key,original_sha256) "
                 + "values (:id,:owner,:processing,:geometry,'assets/a.stl','" + "a".repeat(64) + "')")
-            .param("id", UUID.randomUUID()).param("owner", owner).param("processing", processing).param("geometry", geometry).update();
+            .param("id", id).param("owner", owner).param("processing", processing).param("geometry", geometry).update();
+        return id;
     }
 }
