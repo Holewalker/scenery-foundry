@@ -43,6 +43,19 @@
     </testResources>
     <plugins>
       <plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <!-- application.yml requires WORKER_DB_PASSWORD with no default (fail-closed provisioning); the test
+               JVM needs a fixed value so @SpringBootTest contexts can migrate V5 without depending on a
+               developer's shell environment. Tests that need to exercise the "missing" case configure Flyway
+               directly, bypassing this. -->
+          <environmentVariables>
+            <WORKER_DB_PASSWORD>test-geometry-worker-password</WORKER_DB_PASSWORD>
+          </environmentVariables>
+        </configuration>
+      </plugin>
     </plugins>
   </build>
 </project>
