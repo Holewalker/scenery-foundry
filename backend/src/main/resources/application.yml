@@ -10,7 +10,7 @@ spring:
   flyway:
     enabled: true
     placeholders:
-      workerDbPassword: ${WORKER_DB_PASSWORD:geometry-worker-local}
+      workerDbPassword: ${WORKER_DB_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: validate
