@@ -66,4 +66,34 @@ class StorageResolverTest {
         assertThat(Files.exists(sourceA)).isFalse();
         assertThat(Files.exists(sourceB)).isFalse();
     }
+
+    @Test
+    void createTempFileAllocatesAFreshFileUnderTheRootSoPublishNeverCrossesAFilesystem(@TempDir Path root) throws IOException {
+        var resolver = new StorageResolver(root);
+
+        var temp = resolver.createTempFile();
+
+        assertThat(temp.normalize().startsWith(root)).isTrue();
+        assertThat(Files.exists(temp)).isTrue();
+        assertThat(Files.isRegularFile(temp)).isTrue();
+
+        var second = resolver.createTempFile();
+        assertThat(second).isNotEqualTo(temp);
+    }
+
+    @Test
+    void openInputStreamReadsAnExistingKeyAndFailsOnAMissingOne(@TempDir Path root) throws IOException {
+        var resolver = new StorageResolver(root);
+        var key = "assets/original.stl";
+        var source = Files.createTempFile(root, "upload", ".tmp");
+        Files.writeString(source, "solid cube");
+        resolver.publish(source, key);
+
+        try (var input = resolver.openInputStream(key)) {
+            assertThat(new String(input.readAllBytes(), StandardCharsets.UTF_8)).isEqualTo("solid cube");
+        }
+
+        assertThatThrownBy(() -> resolver.openInputStream("assets/does-not-exist.stl"))
+            .isInstanceOf(StorageAccessException.class);
+    }
 }
