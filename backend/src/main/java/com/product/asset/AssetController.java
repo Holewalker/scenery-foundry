@@ -3,8 +3,11 @@ package com.product.asset;
 import java.util.List;
 import java.util.UUID;
 
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.core.io.Resource;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -39,28 +42,33 @@ public final class AssetController {
     }
 
     @GetMapping("/api/assets")
-    List<AssetCatalogEntry> list(Authentication authentication) {
-        return catalogRepository.findCatalogForOwner(AuthenticatedUser.from(authentication).userId());
+    List<AssetResponse> list(Authentication authentication) {
+        return catalogRepository.findCatalogForOwner(AuthenticatedUser.from(authentication).userId())
+            .stream().map(AssetResponse::from).toList();
     }
 
     @GetMapping("/api/assets/{assetId}")
-    AssetCatalogEntry get(@PathVariable UUID assetId, Authentication authentication) {
-        return findOwned(assetId, authentication);
+    AssetResponse get(@PathVariable UUID assetId, Authentication authentication) {
+        return AssetResponse.from(findOwned(assetId, authentication));
     }
 
+    /** Opens the stream eagerly so a {@code StorageAccessException} maps to an HTTP status before the body
+     * commits; the response converter copies and closes it in a {@code finally} — never the controller.
+     * {@code InputStreamResource#getContentLength} always returns -1, so no {@code Content-Length} header
+     * is emitted and the response is chunked. */
     @GetMapping(value = "/api/assets/{assetId}/original", produces = MediaType.APPLICATION_OCTET_STREAM_VALUE)
-    byte[] original(@PathVariable UUID assetId, Authentication authentication) {
+    ResponseEntity<Resource> original(@PathVariable UUID assetId, Authentication authentication) {
         var entry = findOwned(assetId, authentication);
-        return storageResolver.readBytes(entry.originalStorageKey());
+        return ResponseEntity.ok(new InputStreamResource(storageResolver.openInputStream(entry.originalStorageKey())));
     }
 
     @GetMapping(value = "/api/assets/{assetId}/preview", produces = "model/gltf-binary")
-    byte[] preview(@PathVariable UUID assetId, Authentication authentication) {
+    ResponseEntity<Resource> preview(@PathVariable UUID assetId, Authentication authentication) {
         var entry = findOwned(assetId, authentication);
         if (entry.processingStatus() != AssetProcessingStatus.READY || entry.previewStorageKey() == null) {
             throw new OwnedResourceNotFoundException();
         }
-        return storageResolver.readBytes(entry.previewStorageKey());
+        return ResponseEntity.ok(new InputStreamResource(storageResolver.openInputStream(entry.previewStorageKey())));
     }
 
     private AssetCatalogEntry findOwned(UUID assetId, Authentication authentication) {
