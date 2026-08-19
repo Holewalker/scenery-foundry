@@ -31,7 +31,11 @@ def build_report(result: GeometryCheckResult, original_sha256: str) -> dict:
 
 
 def canonical_report_bytes(report: dict) -> bytes:
-    raw = json.dumps(report, sort_keys=True).encode("utf-8")
+    # Defense in depth (ADR-0006/D4): geometry_checks.py already resolves non-finite measurements
+    # to `None` before a report reaches here, so this should never fire in practice. `allow_nan=False`
+    # makes any future non-finite leak raise here, at the producing boundary, instead of silently
+    # emitting a bare NaN/Infinity that only jcs.canonicalize's unrelated constant-rejection catches.
+    raw = json.dumps(report, sort_keys=True, allow_nan=False).encode("utf-8")
     return canonicalize(raw).canonical_bytes
 
 

@@ -1,6 +1,9 @@
 import json
 
+import pytest
+
 from scenery_foundry_worker.geometry_checks import Diagnostic, GeometryCheckResult
+from scenery_foundry_worker.jcs import CanonicalizationError
 from scenery_foundry_worker.report import build_report, canonical_report_bytes
 
 
@@ -80,3 +83,18 @@ def test_canonical_report_bytes_round_trips_through_jcs_and_is_deterministic():
 
     assert first == second
     assert json.loads(first.decode("utf-8"))["geometryStatus"] == "INVALID_VOLUME"
+
+
+def test_canonical_report_bytes_raises_at_the_producing_json_dumps_boundary_not_downstream_in_jcs():
+    """Defense in depth (D4): geometry_checks.py already resolves non-finite measurements to `None`
+    before they reach here, but a future producer bug must fail loudly at THIS boundary (`json.dumps`
+    with `allow_nan=False`) rather than silently emit a bare NaN/Infinity that only gets caught later
+    by `jcs.canonicalize`'s unrelated constant-rejection path (`CanonicalizationError`)."""
+    result = _result([], status="INVALID_VOLUME")
+    report = build_report(result, original_sha256="c" * 64)
+    report["volumeMm3"] = float("nan")
+
+    with pytest.raises(ValueError) as exc_info:
+        canonical_report_bytes(report)
+
+    assert not isinstance(exc_info.value, CanonicalizationError)
