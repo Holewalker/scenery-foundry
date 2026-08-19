@@ -14,7 +14,8 @@ public final class InMemoryOwnedSceneRepository implements OwnedSceneRepository 
     private final Map<UUID, Project> projects = new HashMap<>();
     private final Map<UUID, List<PreparedAsset>> assets = new HashMap<>();
     private final Map<UUID, List<SceneObject>> scenes = new HashMap<>();
-    private final Set<UUID> readyAssetIds = new HashSet<>();
+    /** assetId -> owning owner, so {@link #findReadyAssetIds} never leaks a ready asset across owners. */
+    private final Map<UUID, UUID> readyAssetOwners = new HashMap<>();
 
     @Override public void save(Project project) { projects.put(project.id(), project); }
     @Override public Optional<Project> findProjectByOwner(UUID ownerId, UUID projectId) {
@@ -22,10 +23,10 @@ public final class InMemoryOwnedSceneRepository implements OwnedSceneRepository 
     }
     public void saveAsset(PreparedAsset asset) {
         assets.computeIfAbsent(asset.projectId(), key -> new ArrayList<>()).add(asset);
-        readyAssetIds.add(asset.id());
+        readyAssetOwners.put(asset.id(), ownerOfProject(asset.projectId()));
     }
     /** Marks READY without PreparedAsset's VALID_VOLUME invariant — models DB eligibility regardless of geometry_status. */
-    public void markAssetReady(UUID assetId) { readyAssetIds.add(assetId); }
+    public void markAssetReady(UUID ownerId, UUID assetId) { readyAssetOwners.put(assetId, ownerId); }
     @Override public List<PreparedAsset> findAssets(UUID projectId) {
         return assets.getOrDefault(projectId, List.of()).stream().sorted(Comparator.comparing(PreparedAsset::id)).toList();
     }
@@ -36,5 +37,14 @@ public final class InMemoryOwnedSceneRepository implements OwnedSceneRepository 
         return scenes.getOrDefault(projectId, List.of()).stream().sorted(Comparator.comparing(object -> object.id().value())).toList();
     }
     @Override public void replaceScene(UUID projectId, List<SceneObject> objects) { scenes.put(projectId, List.copyOf(objects)); }
-    @Override public Set<UUID> findReadyAssetIds(UUID ownerId) { return Set.copyOf(readyAssetIds); }
+    @Override public Set<UUID> findReadyAssetIds(UUID ownerId) {
+        return readyAssetOwners.entrySet().stream().filter(entry -> entry.getValue().equals(ownerId))
+            .map(Map.Entry::getKey).collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
+
+    private UUID ownerOfProject(UUID projectId) {
+        var project = projects.get(projectId);
+        if (project == null) throw new IllegalStateException("saveAsset requires the project to already be created: " + projectId);
+        return project.ownerId();
+    }
 }
