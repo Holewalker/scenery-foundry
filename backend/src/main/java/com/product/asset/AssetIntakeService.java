@@ -1,7 +1,10 @@
 package com.product.asset;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
@@ -35,24 +38,37 @@ public class AssetIntakeService {
     @Transactional
     public AssetIntakeResult intake(UUID ownerId, MultipartFile file) {
         validate(file);
-        byte[] bytes = readBytes(file);
-        String sha256 = sha256Hex(bytes);
 
-        var existing = findExistingJob(ownerId, sha256);
-        if (existing.isPresent()) {
-            var match = existing.get();
-            if (!sha256.equals(match.originalSha256())) throw new IdempotencyConflictException();
-            return new AssetIntakeResult(match.assetId(), match.processingStatus(), match.jobId());
+        var temp = storageResolver.createTempFile();
+        var published = false;
+        try {
+            var upload = digestAndCount(file, temp);
+
+            var existing = findExistingJob(ownerId, upload.sha256());
+            if (existing.isPresent()) {
+                var match = existing.get();
+                if (!upload.sha256().equals(match.originalSha256())) throw new IdempotencyConflictException();
+                return new AssetIntakeResult(match.assetId(), match.processingStatus(), match.jobId());
+            }
+
+            var assetId = UUID.randomUUID();
+            var jobId = UUID.randomUUID();
+            var storageKey = storageResolver.allocateKey("assets/" + assetId, file.getOriginalFilename());
+            storageResolver.publish(temp, storageKey);
+            published = true;
+            insertAsset(assetId, ownerId, storageKey, upload.sha256());
+            insertJob(jobId, ownerId, assetId, storageKey, upload.sha256(), upload.byteCount());
+
+            return new AssetIntakeResult(assetId, AssetProcessingStatus.UPLOADED, jobId);
+        } finally {
+            if (!published) {
+                try {
+                    Files.deleteIfExists(temp);
+                } catch (IOException ignored) {
+                    // best-effort temp cleanup; a leaked temp file is not a correctness issue
+                }
+            }
         }
-
-        var assetId = UUID.randomUUID();
-        var jobId = UUID.randomUUID();
-        var storageKey = storageResolver.allocateKey("assets/" + assetId, file.getOriginalFilename());
-        publish(bytes, storageKey);
-        insertAsset(assetId, ownerId, storageKey, sha256);
-        insertJob(jobId, ownerId, assetId, storageKey, sha256, bytes.length);
-
-        return new AssetIntakeResult(assetId, AssetProcessingStatus.UPLOADED, jobId);
     }
 
     private static void validate(MultipartFile file) {
@@ -62,23 +78,36 @@ public class AssetIntakeService {
         if (file.getSize() > MAX_FILE_SIZE_BYTES) throw new AssetTooLargeException();
     }
 
-    private static byte[] readBytes(MultipartFile file) {
-        try {
-            return file.getBytes();
+    /** Single-pass bounded copy: streams {@code file} into {@code temp}, hashing and counting bytes as they
+     * arrive. Aborts the instant the running total crosses {@link #MAX_FILE_SIZE_BYTES}, so an oversized
+     * upload is never fully buffered in memory or written past the cap onto disk. */
+    private static Upload digestAndCount(MultipartFile file, Path temp) {
+        var digest = newSha256Digest();
+        var buffer = new byte[8192];
+        long total = 0;
+        try (InputStream input = file.getInputStream(); OutputStream output = Files.newOutputStream(temp)) {
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                total += read;
+                if (total > MAX_FILE_SIZE_BYTES) throw new AssetTooLargeException();
+                digest.update(buffer, 0, read);
+                output.write(buffer, 0, read);
+            }
         } catch (IOException exception) {
             throw new StorageAccessException("upload stream");
         }
+        return new Upload(HexFormat.of().formatHex(digest.digest()), total);
     }
 
-    private void publish(byte[] bytes, String storageKey) {
+    private static MessageDigest newSha256Digest() {
         try {
-            var temp = Files.createTempFile("asset-upload-", ".tmp");
-            Files.write(temp, bytes);
-            storageResolver.publish(temp, storageKey);
-        } catch (IOException exception) {
-            throw new StorageAccessException(storageKey);
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 must be available", exception);
         }
     }
+
+    private record Upload(String sha256, long byteCount) { }
 
     private void insertAsset(UUID assetId, UUID ownerId, String storageKey, String sha256) {
         jdbc.sql("insert into assets(id,owner_id,processing_status,geometry_status,storage_key,original_sha256) "
@@ -94,9 +123,12 @@ public class AssetIntakeService {
             .param("idempotencyKey", sha256).update();
     }
 
-    private Optional<ExistingJob> findExistingJob(UUID ownerId, String sha256) {
+    /** Joins job-to-asset with an explicit owner match on both sides — defense in depth against a
+     * job whose {@code subject_id} references an asset owned by someone else (data integrity violation),
+     * matching V5's composite {@code (id, owner_id)} key on {@code assets}. */
+    Optional<ExistingJob> findExistingJob(UUID ownerId, String sha256) {
         return jdbc.sql("select j.id as job_id, j.subject_id as asset_id, a.processing_status, a.original_sha256 "
-                + "from geometry_jobs j join assets a on a.id=j.subject_id "
+                + "from geometry_jobs j join assets a on a.id=j.subject_id and a.owner_id=j.owner_id "
                 + "where j.owner_id=:owner and j.job_type=:jobType and j.idempotency_key=:key")
             .param("owner", ownerId).param("jobType", JOB_TYPE).param("key", sha256)
             .query((row, index) -> new ExistingJob(row.getObject("job_id", UUID.class), row.getObject("asset_id", UUID.class),
@@ -110,14 +142,6 @@ public class AssetIntakeService {
             + "\"jobId\":\"" + jobId + "\",\"subjectId\":\"" + assetId + "\","
             + "\"input\":{\"storageKey\":\"" + storageKey + "\",\"sha256\":\"" + sha256 + "\",\"sizeBytes\":" + sizeBytes + "},"
             + "\"output\":{\"directory\":\"assets/" + assetId + "\"},\"options\":{\"geometryPolicyVersion\":1}}";
-    }
-
-    private static String sha256Hex(byte[] bytes) {
-        try {
-            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("SHA-256 must be available", exception);
-        }
     }
 
     private record ExistingJob(UUID jobId, UUID assetId, AssetProcessingStatus processingStatus, String originalSha256) { }
