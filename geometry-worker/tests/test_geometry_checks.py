@@ -70,3 +70,45 @@ def test_known_manifold_status_maps_to_its_stable_code():
     from scenery_foundry_worker.geometry_checks import _manifold_diagnostic_code
 
     assert _manifold_diagnostic_code(Error.NotManifold) == "MANIFOLD_NOT_MANIFOLD"
+
+
+def test_non_finite_volume_resolves_invalid_volume_with_non_finite_measurement_diagnostic(
+    monkeypatch, tmp_path
+):
+    """A NaN volume must not slip past NON_POSITIVE_VOLUME (float('nan') <= 0 is False in Python)
+    and must never reach json.dumps/jcs.canonicalize uncaught (ADR-0006, D4)."""
+    path = _write_stl(tmp_path, trimesh.creation.box(extents=[10, 20, 30]))
+    mesh = load_stl_for_analysis(path)
+    monkeypatch.setattr(trimesh.Trimesh, "volume", property(lambda self: float("nan")))
+
+    result = run_geometry_checks(mesh)
+
+    assert result.geometry_status == "INVALID_VOLUME"
+    assert any(
+        d.code == "NON_FINITE_MEASUREMENT" and d.severity == "ERROR" for d in result.diagnostics
+    )
+    assert result.volume_mm3 is None
+    assert not any(d.code == "NON_POSITIVE_VOLUME" for d in result.diagnostics)
+
+
+def test_non_finite_bounds_resolves_invalid_volume_with_non_finite_measurement_diagnostic(
+    monkeypatch, tmp_path
+):
+    """Distinct from MANIFOLD_NON_FINITE_VERTEX: finite vertices whose derived bounds overflow."""
+    path = _write_stl(tmp_path, trimesh.creation.box(extents=[10, 20, 30]))
+    mesh = load_stl_for_analysis(path)
+    monkeypatch.setattr(
+        trimesh.Trimesh,
+        "bounds",
+        property(lambda self: [[float("-inf"), -10.0, -15.0], [5.0, 10.0, 15.0]]),
+    )
+
+    result = run_geometry_checks(mesh)
+
+    assert result.geometry_status == "INVALID_VOLUME"
+    assert any(
+        d.code == "NON_FINITE_MEASUREMENT" and d.severity == "ERROR" for d in result.diagnostics
+    )
+    assert result.bounds_min is None
+    assert result.bounds_max == [5.0, 10.0, 15.0]
+    assert result.volume_mm3 is not None

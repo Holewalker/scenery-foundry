@@ -6,6 +6,7 @@ The loader preserves bytes (`process=False`); checks 3-8 run on a separately wel
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -56,9 +57,9 @@ class GeometryCheckResult:
     diagnostics: list[Diagnostic]
     triangle_count: int
     component_count: int
-    bounds_min: list[float]
-    bounds_max: list[float]
-    volume_mm3: float
+    bounds_min: list[float] | None
+    bounds_max: list[float] | None
+    volume_mm3: float | None
 
 
 def load_stl_for_analysis(path: Path) -> trimesh.Trimesh:
@@ -101,6 +102,17 @@ def run_geometry_checks(original: trimesh.Trimesh) -> GeometryCheckResult:
             )
         )
 
+    volume = float(analysis.volume)
+    bounds_min = [float(value) for value in original.bounds[0]]
+    bounds_max = [float(value) for value in original.bounds[1]]
+    if not math.isfinite(volume) or not all(math.isfinite(value) for value in bounds_min + bounds_max):
+        # ADR-0006/D4: a non-finite measurement (e.g. NaN volume) must resolve to INVALID_VOLUME
+        # through this diagnostic instead of silently passing NON_POSITIVE_VOLUME's `<= 0` check
+        # (float('nan') <= 0 is False in Python) and later crashing json.dumps/jcs.canonicalize.
+        diagnostics.append(
+            Diagnostic("NON_FINITE_MEASUREMENT", "ERROR", 1, "geometry.non_finite_measurement")
+        )
+
     has_error = any(d.severity == "ERROR" for d in diagnostics)
     geometry_status = "INVALID_VOLUME" if has_error else "VALID_VOLUME"
 
@@ -109,9 +121,9 @@ def run_geometry_checks(original: trimesh.Trimesh) -> GeometryCheckResult:
         diagnostics=diagnostics,
         triangle_count=int(len(original.faces)),
         component_count=component_count,
-        bounds_min=[float(value) for value in original.bounds[0]],
-        bounds_max=[float(value) for value in original.bounds[1]],
-        volume_mm3=float(analysis.volume),
+        bounds_min=bounds_min if all(math.isfinite(value) for value in bounds_min) else None,
+        bounds_max=bounds_max if all(math.isfinite(value) for value in bounds_max) else None,
+        volume_mm3=volume if math.isfinite(volume) else None,
     )
 
 
