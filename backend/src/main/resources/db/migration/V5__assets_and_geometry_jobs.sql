@@ -37,7 +37,13 @@ ALTER TABLE assets ADD COLUMN volume_mm3 double precision;
 ALTER TABLE assets ADD COLUMN geometry_policy_version int;
 ALTER TABLE assets ADD COLUMN diagnostic_report jsonb;
 ALTER TABLE assets ADD COLUMN error_code varchar(64);
-ALTER TABLE assets ADD COLUMN created_at timestamptz NOT NULL DEFAULT clock_timestamp();
+-- now() (STABLE) is intentional, not a leftover TODO: unlike clock_timestamp() (VOLATILE) it takes Postgres's
+-- ADD COLUMN fast path (metadata-only default, no full-table rewrite) on this already-populated table. See
+-- design.md D5 for the full ALTER TABLE rewrite analysis and the pg_proc volatility proof.
+ALTER TABLE assets ADD COLUMN created_at timestamptz NOT NULL DEFAULT now();
+
+-- Backs JdbcAssetRepository#findCatalogForOwner's owner-scoped, created_at-desc-ordered catalog listing.
+CREATE INDEX assets_owner_created_idx ON assets (owner_id, created_at DESC, id);
 
 -- Step 5: scene_objects gains owner_id; shared column + composite FKs force project.owner == asset.owner.
 ALTER TABLE scene_objects ADD COLUMN owner_id uuid;
@@ -56,7 +62,7 @@ CREATE TABLE geometry_jobs (
     priority int NOT NULL DEFAULT 0,
     attempt_count int NOT NULL DEFAULT 0,
     max_attempts int NOT NULL DEFAULT 3,
-    available_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    available_at timestamptz NOT NULL DEFAULT now(),
     claim_token uuid,
     worker_id text,
     lease_expires_at timestamptz,
@@ -70,7 +76,7 @@ CREATE TABLE geometry_jobs (
     error_code varchar(64),
     error_message text,
     idempotency_key text NOT NULL,
-    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    created_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (owner_id, job_type, idempotency_key)
 );
 
@@ -78,11 +84,16 @@ CREATE INDEX geometry_jobs_claimable_idx ON geometry_jobs (priority DESC, availa
     WHERE status IN ('PENDING', 'RETRY_WAIT');
 CREATE INDEX geometry_jobs_lease_idx ON geometry_jobs (lease_expires_at) WHERE status = 'RUNNING';
 
--- Roles are cluster-wide (not per-database); guard against re-running against a shared cluster.
+-- Roles are cluster-wide (not per-database): a shared cluster (or a re-deploy) may already have this role from a
+-- prior run. CREATE-or-ALTER converges both paths on the CURRENT workerDbPassword, so a rotated password always
+-- takes effect; a bare "IF NOT EXISTS -> CREATE ROLE" would silently no-op on the pre-existing-role path and leave
+-- the role's actual password diverged from the configured secret.
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'geometry_worker') THEN
         EXECUTE format('CREATE ROLE geometry_worker LOGIN PASSWORD %L', '${workerDbPassword}');
+    ELSE
+        EXECUTE format('ALTER ROLE geometry_worker PASSWORD %L', '${workerDbPassword}');
     END IF;
 END $$;
 GRANT SELECT, UPDATE ON geometry_jobs TO geometry_worker;
