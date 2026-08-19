@@ -1,6 +1,7 @@
 package com.product.geometryjob;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.UUID;
 
@@ -8,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -64,6 +66,45 @@ class AssetProjectorTest {
 
         assertThat(projected).isZero();
         assertThat(processingStatus(assetId)).isEqualTo("UPLOADED");
+    }
+
+    @Test
+    void rollsBackTheAssetUpdateWhenTheSameJobsSecondUpdateFails() {
+        createFailingProjectionTrigger();
+        var owner = insertUser();
+        var assetId = insertAsset(owner);
+        insertTerminalJob(owner, assetId, "COMPLETED", "assets/" + assetId + "/preview.glb", "sha-1",
+            "{\"geometryStatus\":\"VALID_VOLUME\"}", "FORCE_ROLLBACK_TEST");
+
+        assertThatThrownBy(() -> projector.project()).isInstanceOf(DataAccessException.class);
+
+        assertThat(processingStatus(assetId)).isEqualTo("UPLOADED");
+        assertThat(geometryStatus(assetId)).isEqualTo("UNKNOWN");
+    }
+
+    /**
+     * Test-only trigger that raises whenever {@code geometry_jobs.projected_at} is updated on a row whose
+     * {@code error_code} is the sentinel {@code FORCE_ROLLBACK_TEST}. Fires only on the projector's SECOND
+     * statement (the first statement never touches {@code geometry_jobs}), proving the two writes share one
+     * atomic transaction rather than each committing independently.
+     */
+    private void createFailingProjectionTrigger() {
+        jdbc.sql("""
+                CREATE OR REPLACE FUNCTION test_fail_second_projection_update() RETURNS trigger AS $$
+                BEGIN
+                    IF NEW.error_code = 'FORCE_ROLLBACK_TEST' THEN
+                        RAISE EXCEPTION 'forced failure for atomicity test';
+                    END IF;
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql
+                """).update();
+        jdbc.sql("DROP TRIGGER IF EXISTS test_fail_second_projection_update_trigger ON geometry_jobs").update();
+        jdbc.sql("""
+                CREATE TRIGGER test_fail_second_projection_update_trigger
+                BEFORE UPDATE ON geometry_jobs
+                FOR EACH ROW EXECUTE FUNCTION test_fail_second_projection_update()
+                """).update();
     }
 
     private String processingStatus(UUID assetId) {
