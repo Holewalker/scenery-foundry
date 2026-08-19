@@ -1,5 +1,6 @@
 package com.product.asset;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -9,12 +10,17 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -79,7 +85,7 @@ class AssetControllerTest {
     }
 
     @Test
-    void listReturnsTheCatalogForTheAuthenticatedOwner() throws Exception {
+    void listReturnsAssetResponseDtosWithNoLeakedOwnerIdOrStorageKeys() throws Exception {
         var owner = UUID.randomUUID();
         var entry = readyEntry(UUID.randomUUID(), owner);
         when(catalogRepository.findCatalogForOwner(owner)).thenReturn(List.of(entry));
@@ -87,18 +93,26 @@ class AssetControllerTest {
         mvc.perform(get("/api/assets").with(authentication(authFor(owner))))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$[0].id").value(entry.id().toString()))
-            .andExpect(jsonPath("$[0].processingStatus").value("READY"));
+            .andExpect(jsonPath("$[0].processingStatus").value("READY"))
+            .andExpect(jsonPath("$[0].previewAvailable").value(true))
+            .andExpect(jsonPath("$[0].ownerId").doesNotExist())
+            .andExpect(jsonPath("$[0].originalStorageKey").doesNotExist())
+            .andExpect(jsonPath("$[0].previewStorageKey").doesNotExist());
     }
 
     @Test
-    void getReturnsTheSingleEntryForTheAuthenticatedOwner() throws Exception {
+    void getReturnsAnAssetResponseDtoWithNoLeakedOwnerIdOrStorageKeysForTheAuthenticatedOwner() throws Exception {
         var owner = UUID.randomUUID();
         var assetId = UUID.randomUUID();
         when(catalogRepository.findByOwnerAndId(owner, assetId)).thenReturn(Optional.of(readyEntry(assetId, owner)));
 
         mvc.perform(get("/api/assets/{id}", assetId).with(authentication(authFor(owner))))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.id").value(assetId.toString()));
+            .andExpect(jsonPath("$.id").value(assetId.toString()))
+            .andExpect(jsonPath("$.previewAvailable").value(true))
+            .andExpect(jsonPath("$.ownerId").doesNotExist())
+            .andExpect(jsonPath("$.originalStorageKey").doesNotExist())
+            .andExpect(jsonPath("$.previewStorageKey").doesNotExist());
     }
 
     @Test
@@ -112,29 +126,48 @@ class AssetControllerTest {
     }
 
     @Test
-    void originalReturnsTheStoredStlBytesForTheOwningUser() throws Exception {
+    void originalStreamsTheStoredStlBytesForTheOwningUserAsChunkedWithNoContentLengthAndClosesTheStream() throws Exception {
         var owner = UUID.randomUUID();
         var assetId = UUID.randomUUID();
         var entry = readyEntry(assetId, owner);
         when(catalogRepository.findByOwnerAndId(owner, assetId)).thenReturn(Optional.of(entry));
-        when(storageResolver.readBytes(entry.originalStorageKey())).thenReturn("solid cube".getBytes());
+        var tracked = new CloseTrackingInputStream("solid cube".getBytes());
+        when(storageResolver.openInputStream(entry.originalStorageKey())).thenReturn(tracked);
 
         mvc.perform(get("/api/assets/{id}/original", assetId).with(authentication(authFor(owner))))
             .andExpect(status().isOk())
-            .andExpect(content().bytes("solid cube".getBytes()));
+            .andExpect(content().bytes("solid cube".getBytes()))
+            .andExpect(header().doesNotExist("Content-Length"));
+
+        assertThat(tracked.closed()).isTrue();
     }
 
     @Test
-    void previewReturnsTheGlbBytesOnlyWhenTheAssetIsReady() throws Exception {
+    void previewStreamsTheGlbBytesOnlyWhenTheAssetIsReadyAsChunkedWithNoContentLength() throws Exception {
         var owner = UUID.randomUUID();
         var assetId = UUID.randomUUID();
         var entry = readyEntry(assetId, owner);
         when(catalogRepository.findByOwnerAndId(owner, assetId)).thenReturn(Optional.of(entry));
-        when(storageResolver.readBytes(entry.previewStorageKey())).thenReturn("glb bytes".getBytes());
+        var tracked = new CloseTrackingInputStream("glb bytes".getBytes());
+        when(storageResolver.openInputStream(entry.previewStorageKey())).thenReturn(tracked);
 
         mvc.perform(get("/api/assets/{id}/preview", assetId).with(authentication(authFor(owner))))
             .andExpect(status().isOk())
-            .andExpect(content().bytes("glb bytes".getBytes()));
+            .andExpect(content().bytes("glb bytes".getBytes()))
+            .andExpect(header().doesNotExist("Content-Length"));
+
+        assertThat(tracked.closed()).isTrue();
+    }
+
+    @Test
+    void originalReturnsNotFoundForAForeignAssetBeforeEverOpeningAStream() throws Exception {
+        var owner = UUID.randomUUID();
+        var assetId = UUID.randomUUID();
+        when(catalogRepository.findByOwnerAndId(owner, assetId)).thenReturn(Optional.empty());
+
+        mvc.perform(get("/api/assets/{id}/original", assetId).with(authentication(authFor(owner))))
+            .andExpect(status().isNotFound());
+        verifyNoInteractions(storageResolver);
     }
 
     @Test
@@ -163,6 +196,20 @@ class AssetControllerTest {
         mvc.perform(multipart("/api/assets").file(file).with(authentication(authFor(owner))).with(csrf()))
             .andExpect(status().is(httpStatus))
             .andExpect(jsonPath("$.code").value(code));
+    }
+
+    /** Proves the response converter closes the stream it was handed, rather than the controller. */
+    private static final class CloseTrackingInputStream extends InputStream {
+        private final InputStream delegate;
+        private final AtomicBoolean closed = new AtomicBoolean(false);
+
+        CloseTrackingInputStream(byte[] content) { this.delegate = new ByteArrayInputStream(content); }
+
+        @Override public int read() throws IOException { return delegate.read(); }
+        @Override public int read(byte[] buffer, int offset, int length) throws IOException { return delegate.read(buffer, offset, length); }
+        @Override public void close() throws IOException { closed.set(true); delegate.close(); }
+
+        boolean closed() { return closed.get(); }
     }
 
     private static UsernamePasswordAuthenticationToken authFor(UUID owner) {

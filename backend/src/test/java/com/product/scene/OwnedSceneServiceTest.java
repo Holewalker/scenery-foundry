@@ -80,7 +80,7 @@ class OwnedSceneServiceTest {
         var repository = new InMemoryOwnedSceneRepository();
         var service = new OwnedSceneService(repository, UNUSED_STORAGE);
         service.createProject(new Project(projectId, ownerA));
-        repository.markAssetReady(assetId);
+        repository.markAssetReady(ownerA, assetId);
 
         var invalidVolumeButReady = new SceneDtos.SceneObjectDto(1, assetId, 1,
             new double[] {0, 0, 0}, new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}, identity());
@@ -93,6 +93,23 @@ class OwnedSceneServiceTest {
         assertThatThrownBy(() -> service.replaceScene(ownerA, projectId, new SceneDtos.SceneDto(List.of(notReady))))
             .isInstanceOf(InvalidSceneException.class);
         assertThat(service.loadScene(ownerA, projectId).objects()).hasSize(1);
+    }
+
+    @Test
+    void hidesOtherOwnersReadyAssetsFromReplaceSceneEvenWhenTheDoubleSharesOneRepositoryInstance() {
+        var repository = new InMemoryOwnedSceneRepository();
+        var service = new OwnedSceneService(repository, UNUSED_STORAGE);
+        var projectIdB = UUID.randomUUID();
+        service.createProject(new Project(projectId, ownerA));
+        service.createProject(new Project(projectIdB, ownerB));
+        repository.saveAsset(new PreparedAsset(assetId, projectId, AssetProcessingStatus.READY,
+            AssetGeometryStatus.VALID_VOLUME, "assets/a.stl", "a".repeat(64)));
+
+        var foreignRef = new SceneDtos.SceneObjectDto(1, assetId, 1,
+            new double[] {0, 0, 0}, new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}, identity());
+
+        assertThatThrownBy(() -> service.replaceScene(ownerB, projectIdB, new SceneDtos.SceneDto(List.of(foreignRef))))
+            .isInstanceOf(InvalidSceneException.class);
     }
 
     @Test

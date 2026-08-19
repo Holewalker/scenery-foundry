@@ -1,6 +1,7 @@
 package com.product.storage;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -64,7 +65,41 @@ public final class StorageResolver {
         }
     }
 
-    /** Publishes {@code source} to {@code storageKey} without ever overwriting an existing artifact (ADR-0002). */
+    /**
+     * Allocates a fresh temp file inside the storage root (under {@code root/tmp}) so that
+     * {@link #publish(Path, String)}'s hard link never crosses a filesystem boundary (EXDEV).
+     * Ownership transfers to {@code publish()}, which deletes it on every path; on any other
+     * outcome (e.g. intake aborts before publishing) the CALLER is responsible for deleting it.
+     */
+    public Path createTempFile() {
+        try {
+            var tempDir = root.resolve("tmp");
+            Files.createDirectories(tempDir);
+            return Files.createTempFile(tempDir, "asset-upload-", ".tmp");
+        } catch (IOException exception) {
+            throw new StorageAccessException("tmp");
+        }
+    }
+
+    /** Opens a read stream for {@code storageKey}. The CALLER (or a framework converter) closes it. */
+    public InputStream openInputStream(String storageKey) {
+        var resolved = walk(storageKey);
+        try {
+            return Files.newInputStream(resolved);
+        } catch (IOException exception) {
+            throw new StorageAccessException(storageKey);
+        }
+    }
+
+    /**
+     * Publishes {@code source} to {@code storageKey} without ever overwriting an existing artifact (ADR-0002).
+     *
+     * <p><b>Ownership handoff</b>: {@code publish()} takes ownership of {@code source} unconditionally — it
+     * deletes it in a {@code finally} block on every path (success, a losing collision, or a link failure).
+     * Callers MUST NOT reuse or re-delete {@code source} after calling this method. {@code source} MUST have
+     * been allocated via {@link #createTempFile()} (or otherwise reside on the same filesystem as this
+     * resolver's root), or the hard link below fails with {@code EXDEV}.
+     */
     public void publish(Path source, String storageKey) {
         var target = walk(storageKey);
         try {
