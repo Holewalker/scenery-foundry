@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { fetchAssets, fetchScene, login, resetCsrfCache, saveScene } from './client'
+import { fetchAssetPreview, fetchAssets, fetchScene, login, resetCsrfCache, saveScene, uploadAsset } from './client'
 
 const originalFetch = globalThis.fetch
 
@@ -17,17 +17,80 @@ afterEach(() => {
 })
 
 describe('api client', () => {
-  it('fetches the ordered asset catalog with same-origin credentials and no csrf header', async () => {
+  it('fetches the owner-scoped asset catalog with same-origin credentials and no csrf header', async () => {
     const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
-    fetchMock.mockResolvedValueOnce(jsonResponse([{ id: 'asset-a' }, { id: 'asset-b' }]))
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse([
+        { id: 'asset-a', processingStatus: 'READY' },
+        { id: 'asset-b', processingStatus: 'UPLOADED' },
+      ]),
+    )
 
-    const assets = await fetchAssets('project-1')
+    const assets = await fetchAssets()
 
-    expect(assets).toEqual([{ id: 'asset-a' }, { id: 'asset-b' }])
+    expect(assets).toEqual([
+      { id: 'asset-a', processingStatus: 'READY' },
+      { id: 'asset-b', processingStatus: 'UPLOADED' },
+    ])
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
-    expect(url).toBe('/api/projects/project-1/assets')
+    expect(url).toBe('/api/assets')
     expect(init.credentials).toBe('same-origin')
     expect(new Headers(init.headers).has('X-CSRF-TOKEN')).toBe(false)
+  })
+
+  it('throws when the owner-scoped catalog request is rejected (e.g. unauthenticated)', async () => {
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 401 } as Response)
+
+    await expect(fetchAssets()).rejects.toThrow('failed to fetch assets')
+  })
+
+  it('fetches the published preview.glb bytes for an asset with same-origin credentials', async () => {
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
+    const glbBuffer = new ArrayBuffer(4)
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, arrayBuffer: async () => glbBuffer } as unknown as Response)
+
+    const buffer = await fetchAssetPreview('asset-a')
+
+    expect(buffer).toBe(glbBuffer)
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/assets/asset-a/preview')
+    expect(init.credentials).toBe('same-origin')
+  })
+
+  it('throws when a preview is requested for a foreign or not-yet-ready asset (404)', async () => {
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 404 } as Response)
+
+    await expect(fetchAssetPreview('asset-foreign')).rejects.toThrow('failed to fetch asset preview')
+  })
+
+  it('uploads an STL file as multipart form data with the csrf header attached', async () => {
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ token: 'csrf-token-value', headerName: 'X-CSRF-TOKEN' }))
+      .mockResolvedValueOnce(jsonResponse({ assetId: 'asset-new', processingStatus: 'UPLOADED', jobId: 'job-1' }))
+    const file = new File([new Uint8Array([1, 2, 3])], 'part.stl', { type: 'application/octet-stream' })
+
+    const result = await uploadAsset(file)
+
+    expect(result).toEqual({ assetId: 'asset-new', processingStatus: 'UPLOADED', jobId: 'job-1' })
+    const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit]
+    expect(url).toBe('/api/assets')
+    expect(init.method).toBe('POST')
+    expect(new Headers(init.headers).get('X-CSRF-TOKEN')).toBe('csrf-token-value')
+    const body = init.body as FormData
+    expect(body.get('file')).toBe(file)
+  })
+
+  it('throws when the upload is rejected by the server', async () => {
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ token: 't', headerName: 'X-CSRF-TOKEN' }))
+      .mockResolvedValueOnce({ ok: false, status: 413 } as Response)
+    const file = new File([new Uint8Array([1])], 'huge.stl')
+
+    await expect(uploadAsset(file)).rejects.toThrow('failed to upload asset')
   })
 
   it('attaches the server-provided csrf header to a mutating save request', async () => {

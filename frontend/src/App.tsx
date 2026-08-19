@@ -3,6 +3,7 @@ import type { FormEvent } from 'react'
 import './app.css'
 import { fetchAssets, fetchScene, login, saveScene } from './api/client'
 import { AssetCatalog } from './editor/AssetCatalog'
+import { AssetUpload } from './editor/AssetUpload'
 import { EditorCanvas } from './editor/EditorCanvas'
 import { useEditorStore } from './editor/store'
 
@@ -54,7 +55,7 @@ export function App() {
 
   useEffect(() => {
     if (!authenticated || !projectId) return
-    Promise.all([fetchAssets(projectId), fetchScene(projectId)])
+    Promise.all([fetchAssets(), fetchScene(projectId)])
       .then(([fetchedAssets, scene]) => {
         setAssets(fetchedAssets)
         loadScene(scene)
@@ -115,10 +116,11 @@ export function App() {
         </p>
       </header>
       <aside className="panel">
+        <AssetUpload />
         <AssetCatalog assets={assets} />
       </aside>
       <section className="viewport">
-        <EditorCanvas projectId={projectId} />
+        <EditorCanvas />
       </section>
       <footer className="editor-toolbar">
         <button type="button" aria-pressed={mode === 'translate'} onClick={() => setMode('translate')}>

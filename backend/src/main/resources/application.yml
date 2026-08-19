@@ -9,6 +9,8 @@ spring:
     password: ${DATABASE_PASSWORD:scenery-local}
   flyway:
     enabled: true
+    placeholders:
+      workerDbPassword: ${WORKER_DB_PASSWORD:geometry-worker-local}
   jpa:
     hibernate:
       ddl-auto: validate
@@ -19,6 +21,9 @@ server:
         http-only: true
         same-site: lax
         secure: ${SESSION_COOKIE_SECURE:true}
+spring.servlet.multipart:
+  max-file-size: 205MB
+  max-request-size: 210MB
 management:
   endpoints:
     web:

@@ -1,22 +1,24 @@
 package com.product.scene;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
-import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
+
+import com.product.storage.StorageAccessException;
+import com.product.storage.StorageResolver;
 
 @Service
 public class OwnedSceneService {
     private static final int MAX_SCENE_OBJECTS = 250;
     private static final double TRANSLATION_EPSILON_MM = 1e-6;
-    private static final String DATA_ROOT = System.getenv().getOrDefault("SCENE_DATA_ROOT", "/data");
     private final OwnedSceneRepository repository;
-    public OwnedSceneService(OwnedSceneRepository repository) { this.repository = repository; }
+    private final StorageResolver storageResolver;
+    public OwnedSceneService(OwnedSceneRepository repository, StorageResolver storageResolver) {
+        this.repository = repository;
+        this.storageResolver = storageResolver;
+    }
     public void createProject(Project project) { repository.save(project); }
     public Project findProject(UUID ownerId, UUID projectId) {
         OwnerScope.requireOwner(ownerId);
@@ -46,8 +48,8 @@ public class OwnedSceneService {
         if (objects.size() > MAX_SCENE_OBJECTS) throw new InvalidSceneException("scene exceeds the maximum object count");
         if (objects.stream().map(SceneDtos.SceneObjectDto::id).distinct().count() != objects.size())
             throw new InvalidSceneException("scene object ids must be unique");
-        var assetIds = repository.findAssets(projectId).stream().map(PreparedAsset::id).collect(Collectors.toSet());
-        repository.replaceScene(projectId, objects.stream().map(dto -> toDomain(projectId, assetIds, dto)).toList());
+        var readyAssetIds = repository.findReadyAssetIds(ownerId);
+        repository.replaceScene(projectId, objects.stream().map(dto -> toDomain(projectId, readyAssetIds, dto)).toList());
     }
 
     private static SceneObject toDomain(UUID projectId, Set<UUID> assetIds, SceneDtos.SceneObjectDto dto) {
@@ -76,13 +78,10 @@ public class OwnedSceneService {
             new double[] {matrix[12], matrix[13], matrix[14]}, transform.quaternionXyzw(), transform.scale(), matrix);
     }
 
-    private static byte[] readAssetBytes(String storageKey) {
-        var root = Path.of(DATA_ROOT).toAbsolutePath().normalize();
-        var resolved = root.resolve(storageKey).normalize();
-        if (!resolved.startsWith(root)) throw new OwnedResourceNotFoundException();
+    private byte[] readAssetBytes(String storageKey) {
         try {
-            return Files.readAllBytes(resolved);
-        } catch (IOException exception) {
+            return storageResolver.readBytes(storageKey);
+        } catch (StorageAccessException exception) {
             throw new OwnedResourceNotFoundException();
         }
     }
