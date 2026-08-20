@@ -92,23 +92,41 @@ class AssetProjectorTest {
     @Test
     void projectsOnlyAssetProcessingJobsAndIgnoresCombinedExportJobs() {
         widenJobTypeCheckForCombinedExport();
-        var owner = insertUser();
-        var assetId = insertAsset(owner);
-        var assetJobId = insertTerminalJob(owner, assetId, "COMPLETED", "assets/" + assetId + "/preview.glb", "sha-1",
-            "{\"geometryStatus\":\"VALID_VOLUME\"}", null);
-        var exportJobId = insertTerminalCombinedExportJob(owner);
+        try {
+            var owner = insertUser();
+            var assetId = insertAsset(owner);
+            var assetJobId = insertTerminalJob(owner, assetId, "COMPLETED", "assets/" + assetId + "/preview.glb",
+                "sha-1", "{\"geometryStatus\":\"VALID_VOLUME\"}", null);
+            var exportJobId = insertTerminalCombinedExportJob(owner);
 
-        var projected = projector.project();
+            var projected = projector.project();
 
-        assertThat(projected).isEqualTo(1);
-        assertThat(isProjected(assetJobId)).isTrue();
-        assertThat(isProjected(exportJobId)).isFalse();
+            assertThat(projected).isEqualTo(1);
+            assertThat(isProjected(assetJobId)).isTrue();
+            assertThat(isProjected(exportJobId)).isFalse();
+        } finally {
+            restoreJobTypeCheck();
+        }
     }
 
     private void widenJobTypeCheckForCombinedExport() {
         jdbc.sql("ALTER TABLE geometry_jobs DROP CONSTRAINT geometry_jobs_job_type_check").update();
         jdbc.sql("ALTER TABLE geometry_jobs ADD CONSTRAINT geometry_jobs_job_type_check "
                 + "CHECK (job_type IN ('ASSET_PROCESSING','COMBINED_EXPORT'))").update();
+    }
+
+    /**
+     * Restores the original {@code ASSET_PROCESSING}-only CHECK so the widened constraint from
+     * {@link #widenJobTypeCheckForCombinedExport()} never leaks into other test methods sharing this
+     * container-backed database (CodeRabbit finding on PR1). Must delete this test's own
+     * {@code COMBINED_EXPORT} row first, or re-adding the narrower CHECK is rejected as violated by
+     * that row.
+     */
+    private void restoreJobTypeCheck() {
+        jdbc.sql("DELETE FROM geometry_jobs WHERE job_type = 'COMBINED_EXPORT'").update();
+        jdbc.sql("ALTER TABLE geometry_jobs DROP CONSTRAINT geometry_jobs_job_type_check").update();
+        jdbc.sql("ALTER TABLE geometry_jobs ADD CONSTRAINT geometry_jobs_job_type_check "
+                + "CHECK (job_type IN ('ASSET_PROCESSING'))").update();
     }
 
     private UUID insertTerminalCombinedExportJob(UUID owner) {
