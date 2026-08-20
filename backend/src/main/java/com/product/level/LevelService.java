@@ -14,6 +14,9 @@ public class LevelService {
 
     public Level create(UUID ownerId, UUID projectId, String name) {
         requireProject(ownerId, projectId);
+        if (name == null || name.isBlank()) {
+            throw new InvalidLevelException("name must not be blank");
+        }
         var level = new Level(UUID.randomUUID(), projectId, ownerId, name);
         repository.save(level);
         return level;

@@ -1,6 +1,7 @@
 package com.product.common;
 
 import java.util.Map;
+import java.util.Set;
 
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -41,12 +42,30 @@ public class ApiExceptionHandler {
         return body(HttpStatus.CONFLICT, "IDEMPOTENCY_CONFLICT", exception.getMessage());
     }
 
+    private static final Set<String> MEMBERSHIP_FOREIGN_KEYS = Set.of(
+        "scene_objects_level_project_fkey", "scene_objects_print_group_project_fkey");
+
     /** Composite (x_id, project_id) FK violation (V6): same-owner, wrong-project reference — 422, distinct
-     * from the 404-on-foreign-ownership pattern (ADR-0003), which is reserved for a DIFFERENT owner. */
+     * from the 404-on-foreign-ownership pattern (ADR-0003), which is reserved for a DIFFERENT owner.
+     * Scoped to exactly the two scene-membership FK constraints (Codex finding on PR3, #44): any other
+     * {@code DataIntegrityViolationException} — a unique idempotency-key race, a CHECK violation, etc. —
+     * is rethrown and falls through to the default 500, matching this class's stated scope for exceptions
+     * it does not explicitly map. */
     @ExceptionHandler(DataIntegrityViolationException.class)
     ResponseEntity<Map<String, String>> handleDataIntegrityViolation(DataIntegrityViolationException exception) {
+        if (!isMembershipForeignKeyViolation(exception)) {
+            throw exception;
+        }
         return body(HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_REFERENCE",
             "A referenced resource does not belong to the same project");
+    }
+
+    private static boolean isMembershipForeignKeyViolation(DataIntegrityViolationException exception) {
+        var message = exception.getMostSpecificCause().getMessage();
+        if (message == null) {
+            return false;
+        }
+        return MEMBERSHIP_FOREIGN_KEYS.stream().anyMatch(message::contains);
     }
 
     private static ResponseEntity<Map<String, String>> body(HttpStatus status, String code, String message) {

@@ -50,6 +50,16 @@ class JdbcPrintGroupRepositoryTest {
     }
 
     @Test
+    void rejectsABlankOrWhitespaceOnlyNameBeforeItEverReachesTheDatabase() {
+        var owner = insertUser();
+        var project = insertProject(owner);
+
+        assertThatThrownBy(() -> service.create(owner, project, "   ")).isInstanceOf(InvalidPrintGroupException.class);
+        assertThatThrownBy(() -> service.create(owner, project, "")).isInstanceOf(InvalidPrintGroupException.class);
+        assertThat(service.list(owner, project)).isEmpty();
+    }
+
+    @Test
     void deletingAGroupClearsMembershipButKeepsTheSceneObjectsInTheScene() {
         var owner = insertUser();
         var project = insertProject(owner);

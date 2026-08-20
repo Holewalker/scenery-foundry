@@ -50,6 +50,16 @@ class JdbcLevelRepositoryTest {
     }
 
     @Test
+    void rejectsABlankOrWhitespaceOnlyNameBeforeItEverReachesTheDatabase() {
+        var owner = insertUser();
+        var project = insertProject(owner);
+
+        assertThatThrownBy(() -> service.create(owner, project, "   ")).isInstanceOf(InvalidLevelException.class);
+        assertThatThrownBy(() -> service.create(owner, project, "")).isInstanceOf(InvalidLevelException.class);
+        assertThat(service.list(owner, project)).isEmpty();
+    }
+
+    @Test
     void deletingALevelClearsMembershipButKeepsTheSceneObjectsInTheScene() {
         var owner = insertUser();
         var project = insertProject(owner);

@@ -14,6 +14,9 @@ public class PrintGroupService {
 
     public PrintGroup create(UUID ownerId, UUID projectId, String name) {
         requireProject(ownerId, projectId);
+        if (name == null || name.isBlank()) {
+            throw new InvalidPrintGroupException("name must not be blank");
+        }
         var group = new PrintGroup(UUID.randomUUID(), projectId, ownerId, name);
         repository.save(group);
         return group;
