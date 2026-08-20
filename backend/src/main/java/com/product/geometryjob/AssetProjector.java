@@ -32,7 +32,8 @@ public class AssetProjector {
 
     public int project() {
         var jobIds = jdbc.sql("SELECT id FROM geometry_jobs WHERE status IN ('COMPLETED','FAILED') AND projected_at IS NULL "
-                + "ORDER BY completed_at ASC LIMIT :batch").param("batch", BATCH_SIZE).query(UUID.class).list();
+                + "AND job_type = 'ASSET_PROCESSING' ORDER BY completed_at ASC LIMIT :batch")
+            .param("batch", BATCH_SIZE).query(UUID.class).list();
         jobIds.forEach(this::projectOne);
         return jobIds.size();
     }

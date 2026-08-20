@@ -83,6 +83,61 @@ class AssetProjectorTest {
     }
 
     /**
+     * Regression for P1 (Print Preparation Phase 4): {@link AssetProjector} must scope its selection to
+     * {@code job_type = 'ASSET_PROCESSING'} so a terminal {@code COMBINED_EXPORT} row is never selected or
+     * stamped {@code projected_at} by this projector. The real {@code job_type} CHECK only admits
+     * {@code ASSET_PROCESSING} until the V6 migration (PR2), so this test widens the constraint test-locally
+     * to prove the filter independently of that migration.
+     */
+    @Test
+    void projectsOnlyAssetProcessingJobsAndIgnoresCombinedExportJobs() {
+        widenJobTypeCheckForCombinedExport();
+        try {
+            var owner = insertUser();
+            var assetId = insertAsset(owner);
+            var assetJobId = insertTerminalJob(owner, assetId, "COMPLETED", "assets/" + assetId + "/preview.glb",
+                "sha-1", "{\"geometryStatus\":\"VALID_VOLUME\"}", null);
+            var exportJobId = insertTerminalCombinedExportJob(owner);
+
+            var projected = projector.project();
+
+            assertThat(projected).isEqualTo(1);
+            assertThat(isProjected(assetJobId)).isTrue();
+            assertThat(isProjected(exportJobId)).isFalse();
+        } finally {
+            restoreJobTypeCheck();
+        }
+    }
+
+    private void widenJobTypeCheckForCombinedExport() {
+        jdbc.sql("ALTER TABLE geometry_jobs DROP CONSTRAINT geometry_jobs_job_type_check").update();
+        jdbc.sql("ALTER TABLE geometry_jobs ADD CONSTRAINT geometry_jobs_job_type_check "
+                + "CHECK (job_type IN ('ASSET_PROCESSING','COMBINED_EXPORT'))").update();
+    }
+
+    /**
+     * Restores the original {@code ASSET_PROCESSING}-only CHECK so the widened constraint from
+     * {@link #widenJobTypeCheckForCombinedExport()} never leaks into other test methods sharing this
+     * container-backed database (CodeRabbit finding on PR1). Must delete this test's own
+     * {@code COMBINED_EXPORT} row first, or re-adding the narrower CHECK is rejected as violated by
+     * that row.
+     */
+    private void restoreJobTypeCheck() {
+        jdbc.sql("DELETE FROM geometry_jobs WHERE job_type = 'COMBINED_EXPORT'").update();
+        jdbc.sql("ALTER TABLE geometry_jobs DROP CONSTRAINT geometry_jobs_job_type_check").update();
+        jdbc.sql("ALTER TABLE geometry_jobs ADD CONSTRAINT geometry_jobs_job_type_check "
+                + "CHECK (job_type IN ('ASSET_PROCESSING'))").update();
+    }
+
+    private UUID insertTerminalCombinedExportJob(UUID owner) {
+        var id = UUID.randomUUID();
+        jdbc.sql("insert into geometry_jobs(id,owner_id,job_type,subject_id,status,completed_at,payload,idempotency_key) "
+                + "values (:id,:owner,'COMBINED_EXPORT',:subject,'COMPLETED',clock_timestamp(),'{}'::jsonb,:key)")
+            .param("id", id).param("owner", owner).param("subject", UUID.randomUUID()).param("key", "idem-" + id).update();
+        return id;
+    }
+
+    /**
      * Test-only trigger that raises whenever {@code geometry_jobs.projected_at} is updated on a row whose
      * {@code error_code} is the sentinel {@code FORCE_ROLLBACK_TEST}. Fires only on the projector's SECOND
      * statement (the first statement never touches {@code geometry_jobs}), proving the two writes share one
