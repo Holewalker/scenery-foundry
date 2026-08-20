@@ -196,4 +196,85 @@ class OwnedSceneMigrationIntegrationTest {
             .param("id", id).param("owner", owner).param("processing", processing).param("geometry", geometry).update();
         return id;
     }
+
+    /**
+     * Regression for V6 (Print Preparation Phase 4, PR2): {@code levels} and {@code print_groups} both apply on
+     * a populated database (this container already has V1-V5 data from other tests in the class) and a
+     * {@code scene_objects} row in the SAME project can reference both new FKs simultaneously.
+     */
+    @Test
+    void appliesTheV6MigrationLettingASceneObjectJoinALevelAndPrintGroupInItsOwnProject() {
+        var owner = insertUser();
+        var project = insertProject(owner);
+        var asset = insertAsset(project);
+        var level = insertLevel(project, owner);
+        var printGroup = insertPrintGroup(project, owner);
+
+        var object = new SceneDtos.SceneObjectDto(1, asset, 1, new double[] {0, 0, 0}, new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}, identity());
+        service.replaceScene(owner, project, new SceneDtos.SceneDto(List.of(object)));
+        jdbc.sql("update scene_objects set level_id=:level, print_group_id=:group where project_id=:project and id=1")
+            .param("level", level).param("group", printGroup).param("project", project).update();
+
+        assertThat(jdbc.sql("select level_id, print_group_id from scene_objects where project_id=:project and id=1")
+            .param("project", project)
+            .query((row, index) -> row.getObject("level_id") + ":" + row.getObject("print_group_id")).single())
+            .isEqualTo(level + ":" + printGroup);
+    }
+
+    @Test
+    void rejectsACrossProjectLevelAssignmentOnSceneObjectsViaTheCompositeForeignKey() {
+        var owner = insertUser();
+        var projectA = insertProject(owner);
+        var projectB = insertProject(owner);
+        var asset = insertAsset(projectB);
+        var levelInProjectA = insertLevel(projectA, owner);
+
+        var object = new SceneDtos.SceneObjectDto(1, asset, 1, new double[] {0, 0, 0}, new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}, identity());
+        service.replaceScene(owner, projectB, new SceneDtos.SceneDto(List.of(object)));
+
+        assertThatThrownBy(() -> jdbc.sql("update scene_objects set level_id=:level where project_id=:project and id=1")
+            .param("level", levelInProjectA).param("project", projectB).update()).isInstanceOf(Exception.class);
+    }
+
+    @Test
+    void rejectsACrossProjectPrintGroupAssignmentOnSceneObjectsViaTheCompositeForeignKey() {
+        var owner = insertUser();
+        var projectA = insertProject(owner);
+        var projectB = insertProject(owner);
+        var asset = insertAsset(projectB);
+        var groupInProjectA = insertPrintGroup(projectA, owner);
+
+        var object = new SceneDtos.SceneObjectDto(1, asset, 1, new double[] {0, 0, 0}, new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}, identity());
+        service.replaceScene(owner, projectB, new SceneDtos.SceneDto(List.of(object)));
+
+        assertThatThrownBy(() -> jdbc.sql("update scene_objects set print_group_id=:group where project_id=:project and id=1")
+            .param("group", groupInProjectA).param("project", projectB).update()).isInstanceOf(Exception.class);
+    }
+
+    @Test
+    void widensTheGeometryJobsCheckConstraintToAdmitCombinedExportAlongsideAssetProcessing() {
+        var owner = insertUser();
+        var jobId = UUID.randomUUID();
+
+        jdbc.sql("insert into geometry_jobs(id,owner_id,job_type,subject_id,status,payload,idempotency_key) "
+                + "values (:id,:owner,'COMBINED_EXPORT',:owner,'PENDING','{}'::jsonb,'idem-combined')")
+            .param("id", jobId).param("owner", owner).update();
+
+        assertThat(jdbc.sql("select job_type from geometry_jobs where id=:id").param("id", jobId).query(String.class).single())
+            .isEqualTo("COMBINED_EXPORT");
+    }
+
+    private UUID insertLevel(UUID project, UUID owner) {
+        var id = UUID.randomUUID();
+        jdbc.sql("insert into levels(id,project_id,owner_id,name) values (:id,:project,:owner,'Level 1')")
+            .param("id", id).param("project", project).param("owner", owner).update();
+        return id;
+    }
+
+    private UUID insertPrintGroup(UUID project, UUID owner) {
+        var id = UUID.randomUUID();
+        jdbc.sql("insert into print_groups(id,project_id,owner_id,name) values (:id,:project,:owner,'Group 1')")
+            .param("id", id).param("project", project).param("owner", owner).update();
+        return id;
+    }
 }
