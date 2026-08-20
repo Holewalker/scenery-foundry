@@ -39,3 +39,11 @@ CREATE INDEX scene_objects_print_group_idx ON scene_objects (print_group_id, id)
 ALTER TABLE geometry_jobs DROP CONSTRAINT geometry_jobs_job_type_check;
 ALTER TABLE geometry_jobs ADD CONSTRAINT geometry_jobs_job_type_check
     CHECK (job_type IN ('ASSET_PROCESSING','COMBINED_EXPORT'));
+
+-- Re-key the claimable-job index by job_type now that two types share the queue (V5:83's index had no
+-- job_type column, so JobRepository's `WHERE job_type = :jobType ...` claim query would filter it out after
+-- the index scan rather than seek on it; a sparse job_type could scan past many rows of the other type before
+-- finding a match). Lead with job_type to match the claim query's equality predicate.
+DROP INDEX geometry_jobs_claimable_idx;
+CREATE INDEX geometry_jobs_claimable_idx ON geometry_jobs (job_type, priority DESC, available_at, created_at, id)
+    WHERE status IN ('PENDING', 'RETRY_WAIT');
