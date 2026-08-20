@@ -5,8 +5,7 @@ import { useEditorStore } from './store'
 
 export function AssetUpload() {
   const [status, setStatus] = useState<string | null>(null)
-  const assets = useEditorStore((state) => state.assets)
-  const setAssets = useEditorStore((state) => state.setAssets)
+  const upsertAssets = useEditorStore((state) => state.upsertAssets)
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0]
@@ -15,7 +14,9 @@ export function AssetUpload() {
     setStatus(null)
     try {
       const result = await uploadAsset(file)
-      setAssets([...assets, { id: result.assetId, processingStatus: result.processingStatus }])
+      // Merge by id instead of replacing from a closed-over snapshot: the poll effect may have
+      // applied catalog updates while this upload was in flight, and those must not be dropped.
+      upsertAssets([{ id: result.assetId, processingStatus: result.processingStatus }])
       setStatus(result.processingStatus)
     } catch {
       setStatus('Upload failed')

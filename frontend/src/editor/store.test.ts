@@ -102,6 +102,32 @@ describe('editor store', () => {
   })
 })
 
+describe('upsertAssets', () => {
+  it('updates matching entries by id, preserves untouched entries, and appends unknown ids in order', () => {
+    useEditorStore.getState().setAssets([
+      { id: 'asset-a', processingStatus: 'UPLOADED' },
+      { id: 'asset-b', processingStatus: 'PROCESSING' },
+    ])
+
+    useEditorStore.getState().upsertAssets([
+      { id: 'asset-b', processingStatus: 'READY' },
+      { id: 'asset-c', processingStatus: 'UPLOADED' },
+    ])
+
+    expect(useEditorStore.getState().assets).toEqual([
+      { id: 'asset-a', processingStatus: 'UPLOADED' },
+      { id: 'asset-b', processingStatus: 'READY' },
+      { id: 'asset-c', processingStatus: 'UPLOADED' },
+    ])
+  })
+
+  it('leaves existing state untouched when merging an empty list', () => {
+    useEditorStore.getState().setAssets([{ id: 'asset-a', processingStatus: 'READY' }])
+    useEditorStore.getState().upsertAssets([])
+    expect(useEditorStore.getState().assets).toEqual([{ id: 'asset-a', processingStatus: 'READY' }])
+  })
+})
+
 describe('hasPendingAssets', () => {
   it('reports pending when any asset is still UPLOADED or PROCESSING', () => {
     expect(hasPendingAssets([{ id: 'a', processingStatus: 'UPLOADED' }])).toBe(true)

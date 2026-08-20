@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetEditorStore, useEditorStore } from './store'
 import { AssetUpload } from './AssetUpload'
@@ -55,5 +55,38 @@ describe('AssetUpload', () => {
     fireEvent.change(screen.getByLabelText('Upload STL'), { target: { files: [] } })
 
     expect(uploadAssetMock).not.toHaveBeenCalled()
+  })
+
+  it('does not drop an asset the poll added to the store while the upload was still in flight', async () => {
+    let resolveUpload!: (value: { assetId: string; processingStatus: 'UPLOADED'; jobId: string }) => void
+    uploadAssetMock.mockReturnValue(
+      new Promise((resolve) => {
+        resolveUpload = resolve
+      }),
+    )
+
+    render(<AssetUpload />)
+    fireEvent.change(screen.getByLabelText('Upload STL'), { target: { files: [selectedFile()] } })
+    await waitFor(() => expect(uploadAssetMock).toHaveBeenCalledTimes(1))
+
+    // A concurrent poll (AssetCatalog's effect) applies a status update for an unrelated
+    // asset while this upload's request is still in flight — this must NOT be lost.
+    act(() => {
+      useEditorStore.getState().upsertAssets([{ id: 'asset-from-poll', processingStatus: 'READY' }])
+    })
+
+    act(() => {
+      resolveUpload({ assetId: 'asset-new', processingStatus: 'UPLOADED', jobId: 'job-1' })
+    })
+
+    await waitFor(() =>
+      expect(useEditorStore.getState().assets).toEqual(
+        expect.arrayContaining([
+          { id: 'asset-from-poll', processingStatus: 'READY' },
+          { id: 'asset-new', processingStatus: 'UPLOADED' },
+        ]),
+      ),
+    )
+    expect(useEditorStore.getState().assets).toHaveLength(2)
   })
 })

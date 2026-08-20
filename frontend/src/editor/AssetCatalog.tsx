@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { fetchAssets } from '../api/client'
 import type { AssetSummary } from './store'
 import { hasPendingAssets, useEditorStore } from './store'
@@ -12,14 +12,22 @@ interface AssetCatalogProps {
 export function AssetCatalog({ assets }: AssetCatalogProps) {
   const insert = useEditorStore((state) => state.insert)
   const setAssets = useEditorStore((state) => state.setAssets)
+  // Monotonically increasing per-request generation. A poll response is only applied if no
+  // newer poll has been issued since it started, so an out-of-order (stale) resolution can
+  // never overwrite state a later request already applied.
+  const generationRef = useRef(0)
 
   // Any asset still UPLOADED/PROCESSING has no final geometry yet, so keep refreshing the
   // owner-scoped catalog until every asset has settled into READY or FAILED.
   useEffect(() => {
     if (!hasPendingAssets(assets)) return
     const interval = setInterval(() => {
+      const requestGeneration = ++generationRef.current
       fetchAssets()
-        .then(setAssets)
+        .then((result) => {
+          if (requestGeneration !== generationRef.current) return
+          setAssets(result)
+        })
         .catch(() => {})
     }, POLL_INTERVAL_MS)
     return () => clearInterval(interval)

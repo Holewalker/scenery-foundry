@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { AssetSummary } from './store'
 import { resetEditorStore, useEditorStore } from './store'
 import { AssetCatalog } from './AssetCatalog'
 
@@ -141,5 +142,44 @@ describe('AssetCatalog polling', () => {
       vi.advanceTimersByTime(10000)
     })
     expect(fetchAssetsMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('discards a stale poll response that resolves after a newer poll already applied', async () => {
+    let resolveFirst!: (value: AssetSummary[]) => void
+    let resolveSecond!: (value: AssetSummary[]) => void
+    const firstPoll = new Promise<AssetSummary[]>((resolve) => {
+      resolveFirst = resolve
+    })
+    const secondPoll = new Promise<AssetSummary[]>((resolve) => {
+      resolveSecond = resolve
+    })
+    fetchAssetsMock.mockReturnValueOnce(firstPoll).mockReturnValueOnce(secondPoll)
+
+    render(<AssetCatalog assets={[{ id: 'asset-a', processingStatus: 'UPLOADED' }]} />)
+
+    act(() => {
+      vi.advanceTimersByTime(3000)
+    })
+    act(() => {
+      vi.advanceTimersByTime(3000)
+    })
+    expect(fetchAssetsMock).toHaveBeenCalledTimes(2)
+
+    // The newer (second) request resolves first and its result must be applied.
+    await act(async () => {
+      resolveSecond([{ id: 'asset-a', processingStatus: 'READY' }])
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(useEditorStore.getState().assets).toEqual([{ id: 'asset-a', processingStatus: 'READY' }])
+
+    // The older (first) request resolves out-of-order, after the newer one — it must be discarded,
+    // not overwrite the newer READY state with its own stale UPLOADED/PROCESSING snapshot.
+    await act(async () => {
+      resolveFirst([{ id: 'asset-a', processingStatus: 'PROCESSING' }])
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(useEditorStore.getState().assets).toEqual([{ id: 'asset-a', processingStatus: 'READY' }])
   })
 })

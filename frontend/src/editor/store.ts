@@ -15,6 +15,25 @@ export function hasPendingAssets(assets: AssetSummary[]): boolean {
   return assets.some((asset) => asset.processingStatus === 'UPLOADED' || asset.processingStatus === 'PROCESSING')
 }
 
+// Merges an incoming asset list into an existing one by id: matching entries are replaced
+// with the incoming version (incoming wins per field), untouched entries are preserved, and
+// unknown ids are appended in the order they arrive. Never drops entries absent from the update.
+export function upsertAssetList(existing: AssetSummary[], incoming: AssetSummary[]): AssetSummary[] {
+  const byId = new Map(existing.map((asset) => [asset.id, asset]))
+  for (const asset of incoming) {
+    byId.set(asset.id, asset)
+  }
+  const merged = existing.map((asset) => byId.get(asset.id) ?? asset)
+  const knownIds = new Set(existing.map((asset) => asset.id))
+  for (const asset of incoming) {
+    if (!knownIds.has(asset.id)) {
+      merged.push(asset)
+      knownIds.add(asset.id)
+    }
+  }
+  return merged
+}
+
 export interface SceneObjectDto {
   id: number
   assetId: string
@@ -86,6 +105,7 @@ export interface EditorState {
   loading: boolean
   error: string | null
   setAssets: (assets: AssetSummary[]) => void
+  upsertAssets: (assets: AssetSummary[]) => void
   insert: (assetId: string) => number
   select: (id: number | null) => void
   setMode: (mode: TransformMode) => void
@@ -103,6 +123,7 @@ export interface EditorState {
 export const useEditorStore = create<EditorState>((set, get) => ({
   ...INITIAL_STATE,
   setAssets: (assets) => set({ assets }),
+  upsertAssets: (assets) => set((state) => ({ assets: upsertAssetList(state.assets, assets) })),
   insert: (assetId) => {
     const id = nextObjectId(get().objects)
     const created: EditorObject = { id, assetId, translationMm: [0, 0, 0], quaternionXyzw: [0, 0, 0, 1], scale: [1, 1, 1] }
