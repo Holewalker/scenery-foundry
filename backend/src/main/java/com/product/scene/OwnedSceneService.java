@@ -57,7 +57,7 @@ public class OwnedSceneService {
             throw new InvalidSceneException("scene object references an invalid asset or contract version");
         requireMatchingTranslation(dto.translationMm(), dto.matrixWorldColumnMajor());
         return new SceneObject(SceneObjectId.of(dto.id()), projectId, dto.assetId(),
-            SceneTransform.of(dto.matrixWorldColumnMajor(), dto.quaternionXyzw(), dto.scale()));
+            SceneTransform.of(dto.matrixWorldColumnMajor(), dto.quaternionXyzw(), dto.scale()), dto.printGroupId(), dto.levelId());
     }
 
     /** matrixWorldColumnMajor is the canonical transform; translationMm is a client convenience field that
@@ -75,7 +75,8 @@ public class OwnedSceneService {
         var transform = object.transform();
         double[] matrix = transform.matrixWorldColumnMajor();
         return new SceneDtos.SceneObjectDto(object.id().value(), object.assetId(), 1,
-            new double[] {matrix[12], matrix[13], matrix[14]}, transform.quaternionXyzw(), transform.scale(), matrix);
+            new double[] {matrix[12], matrix[13], matrix[14]}, transform.quaternionXyzw(), transform.scale(), matrix,
+            object.printGroupId(), object.levelId());
     }
 
     private byte[] readAssetBytes(String storageKey) {
