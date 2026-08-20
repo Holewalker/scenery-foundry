@@ -2,6 +2,7 @@ package com.product.common;
 
 import java.util.Map;
 
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -38,6 +39,14 @@ public class ApiExceptionHandler {
     @ExceptionHandler(IdempotencyConflictException.class)
     ResponseEntity<Map<String, String>> handleIdempotencyConflict(IdempotencyConflictException exception) {
         return body(HttpStatus.CONFLICT, "IDEMPOTENCY_CONFLICT", exception.getMessage());
+    }
+
+    /** Composite (x_id, project_id) FK violation (V6): same-owner, wrong-project reference — 422, distinct
+     * from the 404-on-foreign-ownership pattern (ADR-0003), which is reserved for a DIFFERENT owner. */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    ResponseEntity<Map<String, String>> handleDataIntegrityViolation(DataIntegrityViolationException exception) {
+        return body(HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_REFERENCE",
+            "A referenced resource does not belong to the same project");
     }
 
     private static ResponseEntity<Map<String, String>> body(HttpStatus status, String code, String message) {

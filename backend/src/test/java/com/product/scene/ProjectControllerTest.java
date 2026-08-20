@@ -66,4 +66,19 @@ class ProjectControllerTest {
                 .contentType(MediaType.APPLICATION_JSON).content("{\"objects\":[]}"))
             .andExpect(status().isForbidden());
     }
+
+    /** Task 3.8: ApiExceptionHandler maps a composite-FK violation to 422, not a generic 500. */
+    @Test
+    void mapsACrossProjectReferenceViolationToUnprocessableEntity() throws Exception {
+        var project = UUID.randomUUID();
+        var user = new AuthenticatedUser(UUID.randomUUID(), "owner@example.com");
+        var auth = new UsernamePasswordAuthenticationToken(user, null, List.of());
+        org.mockito.Mockito.doThrow(new org.springframework.dao.DataIntegrityViolationException("composite FK violation"))
+            .when(service).replaceScene(org.mockito.ArgumentMatchers.eq(user.userId()), org.mockito.ArgumentMatchers.eq(project), org.mockito.ArgumentMatchers.any());
+
+        mvc.perform(put("/api/projects/{id}/scene", project).with(authentication(auth)).with(
+                org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf())
+                .contentType(MediaType.APPLICATION_JSON).content("{\"objects\":[]}"))
+            .andExpect(status().isUnprocessableEntity());
+    }
 }

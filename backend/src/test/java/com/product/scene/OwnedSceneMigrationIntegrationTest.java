@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -197,11 +198,7 @@ class OwnedSceneMigrationIntegrationTest {
         return id;
     }
 
-    /**
-     * Regression for V6 (Print Preparation Phase 4, PR2): {@code levels} and {@code print_groups} both apply on
-     * a populated database (this container already has V1-V5 data from other tests in the class) and a
-     * {@code scene_objects} row in the SAME project can reference both new FKs simultaneously.
-     */
+    /** Regression for V6: levels/print_groups apply on a populated DB; a scene_objects row can reference both. */
     @Test
     void appliesTheV6MigrationLettingASceneObjectJoinALevelAndPrintGroupInItsOwnProject() {
         var owner = insertUser();
@@ -219,6 +216,31 @@ class OwnedSceneMigrationIntegrationTest {
             .param("project", project)
             .query((row, index) -> row.getObject("level_id") + ":" + row.getObject("print_group_id")).single())
             .isEqualTo(level + ":" + printGroup);
+    }
+
+    /** Task 3.7: the scene PUT is the single writer of print_group_id/level_id, so a cross-project reference for
+     * the SAME owner must surface as {@link DataIntegrityViolationException} (mapped to 422 by ApiExceptionHandler),
+     * distinct from {@link OwnedResourceNotFoundException} which is reserved for a DIFFERENT owner (ADR-0003). */
+    @Test
+    void rejectsAssigningASceneObjectToAPrintGroupOrLevelInAnotherProjectOfTheSameOwnerAsADataIntegrityViolation() {
+        var owner = insertUser();
+        var projectA = insertProject(owner);
+        var projectB = insertProject(owner);
+        var asset = insertAsset(projectB);
+        var groupInProjectA = insertPrintGroup(projectA, owner);
+        var levelInProjectA = insertLevel(projectA, owner);
+
+        var groupRef = new SceneDtos.SceneObjectDto(1, asset, 1, new double[] {0, 0, 0}, new double[] {0, 0, 0, 1},
+            new double[] {1, 1, 1}, identity(), groupInProjectA, null);
+        assertThatThrownBy(() -> service.replaceScene(owner, projectB, new SceneDtos.SceneDto(List.of(groupRef))))
+            .isInstanceOf(DataIntegrityViolationException.class);
+
+        var levelRef = new SceneDtos.SceneObjectDto(1, asset, 1, new double[] {0, 0, 0}, new double[] {0, 0, 0, 1},
+            new double[] {1, 1, 1}, identity(), null, levelInProjectA);
+        assertThatThrownBy(() -> service.replaceScene(owner, projectB, new SceneDtos.SceneDto(List.of(levelRef))))
+            .isInstanceOf(DataIntegrityViolationException.class);
+
+        assertThat(service.loadScene(owner, projectB).objects()).isEmpty();
     }
 
     @Test
