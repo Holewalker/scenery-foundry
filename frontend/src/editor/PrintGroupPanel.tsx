@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { createPrintGroup, deletePrintGroup, fetchPrintGroups } from '../api/client'
+import { ExportPanel } from './ExportPanel'
 import { useEditorStore } from './store'
 
 interface PrintGroupPanelProps {
@@ -81,6 +82,7 @@ export function PrintGroupPanel({ projectId }: PrintGroupPanelProps) {
             <button type="button" aria-label={`Delete ${group.name}`} onClick={() => void handleDelete(group.id)}>
               Delete
             </button>
+            <ExportPanel printGroupId={group.id} />
           </li>
         ))}
       </ul>
