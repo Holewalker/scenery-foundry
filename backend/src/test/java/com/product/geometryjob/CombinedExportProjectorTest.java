@@ -97,6 +97,25 @@ class CombinedExportProjectorTest {
         assertThat(errorCode(jobId)).isNull();
     }
 
+    /** CodeRabbit finding on PR5 (#46): project() selects candidate ids outside any transaction, so an
+     * overlapping invocation could select an id another invocation already finished with. Calling
+     * projectOne() directly on an already-projected row (bypassing project()'s own WHERE filter) proves the
+     * inner FOR UPDATE + projected_at IS NULL re-check is what actually guards this, not just the outer
+     * selection query. Uses a mismatched sha256 so a bug here would be visible as a flip to FAILED. */
+    @Test
+    void projectOneSkipsARowThatWasProjectedBetweenSelectionAndItsOwnTransaction() {
+        var owner = insertUser();
+        var key = "exports/" + UUID.randomUUID() + "/combined.stl";
+        writeArtifact(key, "combined-stl-bytes");
+        var jobId = insertTerminalJob(owner, "COMPLETED", key, "0".repeat(64), null); // sha mismatch: would fail verification if re-checked
+        jdbc.sql("update geometry_jobs set projected_at = clock_timestamp() where id=:id").param("id", jobId).update();
+
+        projector.projectOne(jobId);
+
+        assertThat(status(jobId)).isEqualTo("COMPLETED");
+        assertThat(errorCode(jobId)).isNull();
+    }
+
     private String writeArtifact(String key, String contents) {
         try {
             var path = storageRoot.resolve(key);

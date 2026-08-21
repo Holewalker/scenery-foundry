@@ -96,7 +96,8 @@ class ExportControllerTest {
     void downloadsTheArtifactOnlyWhenTheRepositoryReportsAValidatedCompletedJob() throws Exception {
         UUID owner = UUID.randomUUID(); UUID export = UUID.randomUUID();
         when(combinedExports.findArtifact(owner, export)).thenReturn(Optional.of(new CombinedExportArtifact("exports/" + export + "/combined.stl", "b".repeat(64))));
-        when(storageResolver.readBytes("exports/" + export + "/combined.stl")).thenReturn(new byte[] {9, 9});
+        when(storageResolver.openInputStream("exports/" + export + "/combined.stl"))
+            .thenReturn(new java.io.ByteArrayInputStream(new byte[] {9, 9}));
 
         mvc.perform(get("/api/combined-exports/{export}/artifact", export).with(authentication(user(owner))))
             .andExpect(status().isOk()).andExpect(header().string("X-Artifact-SHA256", "b".repeat(64)));

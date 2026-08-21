@@ -62,8 +62,21 @@ public class JdbcCaptureProjectionService {
         SnapshotV1Writer.CanonicalSnapshot canonical = writer.canonicalize(snapshot);
         exports.capture(ownerId, snapshot, canonical);
         publishSnapshot(exportId, canonical);
-        insertJob(ownerId, exportId, canonical);
+        try {
+            insertJob(ownerId, exportId, canonical);
+        } catch (RuntimeException exception) {
+            // The DB rows roll back with this transaction, but the snapshot file already published to
+            // storage cannot: the transaction can't reach outside the database (CodeRabbit finding on
+            // PR5, #46). Best-effort delete it so a failed capture never leaves an orphaned artifact
+            // behind — see StorageResolver#deleteQuietly for why this is compensation, not correctness.
+            storageResolver.deleteQuietly(snapshotStorageKey(exportId));
+            throw exception;
+        }
         return exportId;
+    }
+
+    private static String snapshotStorageKey(UUID exportId) {
+        return "exports/" + exportId + "/snapshot.json";
     }
 
     private void lockProject(UUID ownerId, UUID projectId) {
@@ -95,11 +108,18 @@ public class JdbcCaptureProjectionService {
     /** Publishes canonical snapshot bytes so the worker (which cannot read {@code export_snapshots}) can fetch
      * them by storage key + sha256, exactly like an ASSET_PROCESSING job's {@code input} shape. */
     private void publishSnapshot(UUID exportId, SnapshotV1Writer.CanonicalSnapshot canonical) {
-        String storageKey = "exports/" + exportId + "/snapshot.json";
+        String storageKey = snapshotStorageKey(exportId);
         var temp = storageResolver.createTempFile();
         try {
             Files.write(temp, canonical.canonicalBytes());
         } catch (IOException exception) {
+            // publish() never received ownership of temp (CodeRabbit finding on PR5, #46) — its own
+            // finally-block cleanup never runs, so this path must delete it itself.
+            try {
+                Files.deleteIfExists(temp);
+            } catch (IOException ignored) {
+                // best-effort; a leaked temp file is not a correctness issue (matches publish()'s own philosophy)
+            }
             throw new StorageAccessException(storageKey);
         }
         storageResolver.publish(temp, storageKey);

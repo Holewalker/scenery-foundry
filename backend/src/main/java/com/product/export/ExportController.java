@@ -6,6 +6,8 @@ import java.net.URI;
 import java.util.Map;
 import java.util.UUID;
 
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.core.io.Resource;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -63,11 +65,14 @@ public final class ExportController {
      * {@code status='COMPLETED' AND projected_at IS NOT NULL}; a RUNNING/FAILED/un-projected job is 404 here,
      * never the raw job-status read.
      */
+    /** Streamed, not buffered whole (Codex finding on PR5, #46): a valid combined export near the
+     * 5,000,000-triangle ADR-0006 ceiling is roughly 250 MB, and buffering it into a {@code byte[]} per
+     * concurrent request risks the same heap pressure {@code AssetController#original} already avoids. */
     @GetMapping("/api/combined-exports/{exportId}/artifact")
-    ResponseEntity<byte[]> artifact(@PathVariable UUID exportId, Authentication authentication) {
+    ResponseEntity<Resource> artifact(@PathVariable UUID exportId, Authentication authentication) {
         return combinedExports.findArtifact(AuthenticatedUser.from(authentication).userId(), exportId)
             .map(value -> ResponseEntity.ok().header("X-Artifact-SHA256", value.sha256())
-                .body(storageResolver.readBytes(value.storageKey())))
+                .body((Resource) new InputStreamResource(storageResolver.openInputStream(value.storageKey()))))
             .orElseGet(() -> ResponseEntity.notFound().build());
     }
 

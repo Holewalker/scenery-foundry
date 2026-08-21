@@ -1,5 +1,8 @@
 package com.product.geometryjob;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.security.DigestInputStream;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
@@ -53,10 +56,19 @@ public class CombinedExportProjector {
 
     void projectOne(UUID jobId) {
         transactionTemplate.executeWithoutResult(status -> {
-            var job = jdbc.sql("SELECT status, output_storage_key, output_sha256 FROM geometry_jobs WHERE id = :id")
+            // Lock the row and re-check projected_at IS NULL inside the transaction (CodeRabbit finding on
+            // PR5, #46): project() selects candidate ids outside any transaction, so two overlapping
+            // invocations could otherwise both select the same job — after the first stamps projected_at,
+            // the second would still re-verify the artifact and, on a transient read failure, could flip an
+            // already-validated COMPLETED row to FAILED. FOR UPDATE + a missing row (already projected by a
+            // concurrent invocation) means this one has nothing left to do.
+            var pendingJob = jdbc.sql("SELECT status, output_storage_key, output_sha256 FROM geometry_jobs "
+                    + "WHERE id = :id AND projected_at IS NULL FOR UPDATE")
                 .param("id", jobId)
                 .query((row, index) -> new TerminalJob(row.getString("status"), row.getString("output_storage_key"), row.getString("output_sha256")))
-                .single();
+                .optional();
+            if (pendingJob.isEmpty()) return;
+            var job = pendingJob.get();
             if ("COMPLETED".equals(job.status()) && !artifactVerified(job)) {
                 jdbc.sql("UPDATE geometry_jobs SET status = 'FAILED', error_code = 'ARTIFACT_MISSING', "
                         + "projected_at = clock_timestamp() WHERE id = :jobId").param("jobId", jobId).update();
@@ -68,19 +80,22 @@ public class CombinedExportProjector {
 
     private boolean artifactVerified(TerminalJob job) {
         if (job.outputStorageKey() == null || job.outputSha256() == null) return false;
-        byte[] bytes;
-        try {
-            bytes = storageResolver.readBytes(job.outputStorageKey());
-        } catch (StorageAccessException missing) {
+        // Streamed, not buffered whole (Codex finding on PR5, #46): a valid export near the 5,000,000-triangle
+        // ADR-0006 ceiling is roughly 250 MB, and this runs unattended on every scheduler tick.
+        try (InputStream in = storageResolver.openInputStream(job.outputStorageKey())) {
+            return job.outputSha256().equals(sha256Hex(in));
+        } catch (StorageAccessException | IOException missing) {
             return false;
         }
-        return job.outputSha256().equals(sha256Hex(bytes));
     }
 
-    private static String sha256Hex(byte[] bytes) {
+    private static String sha256Hex(InputStream in) throws IOException {
         try {
             var digest = MessageDigest.getInstance("SHA-256");
-            return HexFormat.of().formatHex(digest.digest(bytes));
+            try (var digestStream = new DigestInputStream(in, digest)) {
+                digestStream.transferTo(java.io.OutputStream.nullOutputStream());
+            }
+            return HexFormat.of().formatHex(digest.digest());
         } catch (NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 must be available", exception);
         }

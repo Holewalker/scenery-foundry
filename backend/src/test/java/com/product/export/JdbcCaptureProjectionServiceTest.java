@@ -109,6 +109,24 @@ class JdbcCaptureProjectionServiceTest {
         assertThat(jobCount(fixture.owner())).isZero();
     }
 
+    /** CodeRabbit finding on PR5 (#46): the DB rows roll back, but a transaction can't reach outside the
+     * database, so the snapshot already published to storage must be compensated (deleted) explicitly. */
+    @Test
+    void deletesTheOrphanedSnapshotFileWhenTheJobInsertFails() throws IOException {
+        Fixture fixture = fixture();
+        scene(fixture, 5, "READY", "VALID_VOLUME", fixture.group());
+        forceCombinedExportJobInsertFailureFor(fixture.owner());
+
+        assertThatThrownBy(() -> service.capture(fixture.owner(), fixture.group())).isInstanceOf(DataAccessException.class);
+
+        var exportsDir = storageRoot.resolve("exports");
+        if (Files.exists(exportsDir)) {
+            try (var entries = Files.walk(exportsDir)) {
+                assertThat(entries.filter(Files::isRegularFile)).isEmpty();
+            }
+        }
+    }
+
     private void forceCombinedExportJobInsertFailureFor(UUID ownerId) {
         jdbc.sql("""
                 CREATE OR REPLACE FUNCTION test_fail_combined_export_job_insert() RETURNS trigger AS $$
