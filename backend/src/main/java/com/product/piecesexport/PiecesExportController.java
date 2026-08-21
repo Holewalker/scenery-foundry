@@ -46,7 +46,12 @@ public final class PiecesExportController {
             zip.closeEntry();
             for (PiecesExportPlan.PieceFile piece : plan.pieces()) {
                 zip.putNextEntry(new ZipEntry(piece.fileName()));
-                zip.write(storageResolver.readBytes(piece.originalStorageKey()));
+                // Streamed, not buffered whole (CodeRabbit/Codex finding on PR4, #45): the upload path
+                // accepts originals up to 200 MiB, so loading one full STL into heap per entry risks
+                // OOM under concurrent exports.
+                try (var in = storageResolver.openInputStream(piece.originalStorageKey())) {
+                    in.transferTo(zip);
+                }
                 zip.closeEntry();
             }
         }

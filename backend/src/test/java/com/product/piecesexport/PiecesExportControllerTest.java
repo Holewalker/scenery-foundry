@@ -52,8 +52,10 @@ class PiecesExportControllerTest {
             List.of(new PiecesExportPlan.PieceFile(fileNameA, "assets/a/original.stl"),
                 new PiecesExportPlan.PieceFile(fileNameB, "assets/b/original.stl")));
         when(service.prepare(owner, group)).thenReturn(plan);
-        when(storageResolver.readBytes("assets/a/original.stl")).thenReturn("solid A".getBytes(StandardCharsets.UTF_8));
-        when(storageResolver.readBytes("assets/b/original.stl")).thenReturn("solid B".getBytes(StandardCharsets.UTF_8));
+        when(storageResolver.openInputStream("assets/a/original.stl"))
+            .thenReturn(new ByteArrayInputStream("solid A".getBytes(StandardCharsets.UTF_8)));
+        when(storageResolver.openInputStream("assets/b/original.stl"))
+            .thenReturn(new ByteArrayInputStream("solid B".getBytes(StandardCharsets.UTF_8)));
 
         var asyncResult = mvc.perform(get("/api/print-groups/{id}/pieces-export", group).with(authentication(user(owner))))
             .andExpect(request().asyncStarted())

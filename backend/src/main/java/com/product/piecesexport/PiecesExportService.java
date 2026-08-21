@@ -73,7 +73,12 @@ public class PiecesExportService {
 
         long totalBytes = 0L;
         for (MemberRow asset : distinctAssets.values()) {
-            totalBytes += storageResolver.size(asset.storageKey());
+            try {
+                totalBytes = Math.addExact(totalBytes, storageResolver.size(asset.storageKey()));
+            } catch (ArithmeticException overflow) {
+                throw new PiecesExportTooLargeException("print group " + printGroupId
+                    + " pieces exceed the " + properties.maxUncompressedBytes() + "-byte cap");
+            }
         }
         if (totalBytes > properties.maxUncompressedBytes()) {
             throw new PiecesExportTooLargeException("print group " + printGroupId + " pieces total " + totalBytes

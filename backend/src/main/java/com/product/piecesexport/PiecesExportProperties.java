@@ -10,4 +10,9 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  * autowiring (which fails looking for a {@code long} bean) rather than the configuration-properties binder. */
 @ConfigurationProperties(prefix = "app.piecesexport")
 public record PiecesExportProperties(@DefaultValue("536870912") long maxUncompressedBytes) {
+    public PiecesExportProperties {
+        if (maxUncompressedBytes < 1) {
+            throw new IllegalArgumentException("app.piecesexport.max-uncompressed-bytes must be positive");
+        }
+    }
 }
