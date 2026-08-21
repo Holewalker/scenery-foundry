@@ -169,7 +169,7 @@ def test_validate_merged_export_reload_recheck_succeeds_for_a_watertight_union(t
     piece_b = _piece(2, [10, 10, 10], translation=(5.0, 0.0, 0.0))
     merged = _fold_union([piece_a, piece_b])
 
-    check, stl_path = _validate_merged(merged, tmp_path, job_id="job-1")
+    check, stl_path = _validate_merged(merged, tmp_path, job_id="job-1", pieces=[piece_a, piece_b])
 
     assert check.geometry_status == "VALID_VOLUME"
     assert stl_path.exists()
@@ -179,6 +179,51 @@ def test_validate_merged_export_reload_recheck_succeeds_for_a_watertight_union(t
 
     reloaded_check = run_geometry_checks(load_stl_for_analysis(stl_path))
     assert reloaded_check.geometry_status == "VALID_VOLUME"
+
+
+# --- Correction: ADR-0006 accumulated triangle ceilings + quantized bounds/volume tolerance ---
+
+
+def test_validate_merged_fails_output_triangle_limit_exceeded(tmp_path, monkeypatch):
+    """ADR-0006 (~line 94): output triangles > 5,000,000 fails `COMBINED_OUTPUT_LIMIT_EXCEEDED`.
+    Threshold monkeypatched to 1 (no literal 5M-triangle fixture) so the known union trips it."""
+    from scenery_foundry_worker import combined_export
+
+    monkeypatch.setattr(combined_export, "_COMBINED_OUTPUT_TRIANGLE_LIMIT", 1)
+
+    piece_a = _piece(1, [10, 10, 10])
+    piece_b = _piece(2, [10, 10, 10], translation=(5.0, 0.0, 0.0))
+    merged = _fold_union([piece_a, piece_b])
+
+    with pytest.raises(CombinedExportError) as exc_info:
+        _validate_merged(merged, tmp_path, job_id="job-2", pieces=[piece_a, piece_b])
+
+    assert exc_info.value.error_code == "COMBINED_OUTPUT_LIMIT_EXCEEDED"
+
+
+def test_validate_merged_fails_roundtrip_mismatch_when_reloaded_bounds_shift(tmp_path, monkeypatch):
+    """ADR-0006 (~lines 59-65): reloaded bounds vs. quantized reference, tolerance
+    `max(1e-5mm, 4q)`. A fake reload shifting the mesh 1mm (still watertight/volume>0, so checks
+    3-8 pass) proves only this new gate fires, with `COMBINED_ROUNDTRIP_MISMATCH`."""
+    from scenery_foundry_worker import combined_export
+
+    piece_a = _piece(1, [10, 10, 10])
+    piece_b = _piece(2, [10, 10, 10], translation=(5.0, 0.0, 0.0))
+    merged = _fold_union([piece_a, piece_b])
+
+    real_load = combined_export.load_stl_for_analysis
+
+    def _shifted_load(path):
+        mesh = real_load(path)
+        mesh.apply_translation([1.0, 0.0, 0.0])
+        return mesh
+
+    monkeypatch.setattr(combined_export, "load_stl_for_analysis", _shifted_load)
+
+    with pytest.raises(CombinedExportError) as exc_info:
+        _validate_merged(merged, tmp_path, job_id="job-3", pieces=[piece_a, piece_b])
+
+    assert exc_info.value.error_code == "COMBINED_ROUNDTRIP_MISMATCH"
 
 
 # --- Task 6.11/6.12: end-to-end union job (pure, no DB — DB integration lives in test_main.py) ---
@@ -235,6 +280,30 @@ def test_process_combined_export_job_fails_the_whole_job_naming_the_ineligible_p
     assert result.error_code == "COMBINED_INPUT_INELIGIBLE"
     diagnostics = json.loads(result.diagnostics_json)
     assert diagnostics["details"]["sceneObjectId"] == 2
+    assert not (tmp_path / "exports" / str(export_id) / "combined.stl").exists()
+
+
+def test_process_combined_export_job_fails_on_accumulated_input_triangle_limit_before_union(
+    tmp_path, monkeypatch
+):
+    """ADR-0006 (~line 93): accumulated input triangles > 5,000,000 fails
+    `COMBINED_INPUT_LIMIT_EXCEEDED` BEFORE union runs. Threshold monkeypatched to 20 (24 > 20 for
+    two 12-tri boxes); `_fold_union` raises if called, proving this is a pre-union gate."""
+    from scenery_foundry_worker import combined_export
+
+    monkeypatch.setattr(combined_export, "_COMBINED_INPUT_TRIANGLE_LIMIT", 20)
+
+    def _must_not_run(*args, **kwargs):
+        raise AssertionError("_fold_union must not run once the input triangle ceiling is exceeded")
+
+    monkeypatch.setattr(combined_export, "_fold_union", _must_not_run)
+
+    export_id, job = _seed_two_piece_export(tmp_path)
+
+    result = process_combined_export_job(job, tmp_path)
+
+    assert result.status == "FAILED"
+    assert result.error_code == "COMBINED_INPUT_LIMIT_EXCEEDED"
     assert not (tmp_path / "exports" / str(export_id) / "combined.stl").exists()
 
 
