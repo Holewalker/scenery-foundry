@@ -3,6 +3,7 @@ import { captureCombinedExport, fetchCombinedExportStatus } from '../api/client'
 import type { CombinedExportStatusValue } from '../api/client'
 
 const POLL_INTERVAL_MS = 2000
+const MAX_CONSECUTIVE_POLL_FAILURES = 5
 const TERMINAL_STATUSES = new Set<CombinedExportStatusValue>(['COMPLETED', 'FAILED'])
 
 interface ExportPanelProps {
@@ -17,32 +18,54 @@ export function ExportPanel({ printGroupId }: ExportPanelProps) {
   const [exportId, setExportId] = useState<string | null>(null)
   const [status, setStatus] = useState<CombinedExportStatusValue | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const generationRef = useRef(0)
+  const [capturing, setCapturing] = useState(false)
+  // Bumped only when a NEW capture starts (never per poll tick, or a slow-but-healthy response
+  // would be discarded before it ever resolves — CodeRabbit/Codex findings on PR7, #48). Every
+  // async callback belonging to the operation active when it was issued checks this before
+  // touching state, so a stale capture or a poll from a superseded export can never win a race
+  // against a newer one.
+  const operationRef = useRef(0)
 
   useEffect(() => {
     if (!exportId || (status && TERMINAL_STATUSES.has(status))) return
+    const operation = operationRef.current
+    let consecutiveFailures = 0
     const interval = setInterval(() => {
-      const requestGeneration = ++generationRef.current
       fetchCombinedExportStatus(exportId)
         .then((result) => {
-          if (requestGeneration !== generationRef.current) return
+          if (operation !== operationRef.current) return
+          consecutiveFailures = 0
           setStatus(result.status)
           setError(result.status === 'FAILED' ? (result.errorMessage ?? 'Combined export failed') : null)
         })
-        .catch(() => {})
+        .catch(() => {
+          if (operation !== operationRef.current) return
+          consecutiveFailures += 1
+          if (consecutiveFailures >= MAX_CONSECUTIVE_POLL_FAILURES) {
+            clearInterval(interval)
+            setError('Lost connection while checking combined export status')
+          }
+        })
     }, POLL_INTERVAL_MS)
     return () => clearInterval(interval)
   }, [exportId, status])
 
   async function handleCapture() {
+    const operation = ++operationRef.current // supersedes any in-flight capture/poll from before
     setError(null)
     setStatus(null)
+    setExportId(null)
+    setCapturing(true)
     try {
       const result = await captureCombinedExport(printGroupId)
-      setExportId(result.exportId)
+      if (operation !== operationRef.current) return // a newer capture started before this resolved
+      setExportId(result.id)
       setStatus('PENDING')
     } catch {
+      if (operation !== operationRef.current) return
       setError('Failed to start combined export')
+    } finally {
+      if (operation === operationRef.current) setCapturing(false)
     }
   }
 
@@ -53,7 +76,7 @@ export function ExportPanel({ printGroupId }: ExportPanelProps) {
       <a href={`/api/print-groups/${printGroupId}/pieces-export`} download>
         Download pieces (ZIP)
       </a>
-      <button type="button" onClick={() => void handleCapture()}>
+      <button type="button" onClick={() => void handleCapture()} disabled={capturing}>
         Start combined export
       </button>
       {status && <p role="status">{status}</p>}

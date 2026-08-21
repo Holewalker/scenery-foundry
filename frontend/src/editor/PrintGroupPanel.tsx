@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { createPrintGroup, deletePrintGroup, fetchPrintGroups } from '../api/client'
 import { useEditorStore } from './store'
@@ -12,16 +12,27 @@ interface PrintGroupPanelProps {
 export function PrintGroupPanel({ projectId }: PrintGroupPanelProps) {
   const printGroups = useEditorStore((state) => state.printGroups)
   const setPrintGroups = useEditorStore((state) => state.setPrintGroups)
+  const removePrintGroup = useEditorStore((state) => state.removePrintGroup)
   const objects = useEditorStore((state) => state.objects)
   const selectedId = useEditorStore((state) => state.selectedId)
   const assignPrintGroup = useEditorStore((state) => state.assignPrintGroup)
   const [name, setName] = useState('')
   const [error, setError] = useState<string | null>(null)
+  // Bumped on every projectId change so a slow load for a project the user has already left
+  // can never overwrite state for the project they're now viewing (CodeRabbit finding, PR7 #48).
+  const loadGenerationRef = useRef(0)
 
   useEffect(() => {
+    const generation = ++loadGenerationRef.current
     fetchPrintGroups(projectId)
-      .then(setPrintGroups)
-      .catch(() => setError('Failed to load print groups'))
+      .then((groups) => {
+        if (generation !== loadGenerationRef.current) return
+        setPrintGroups(groups)
+      })
+      .catch(() => {
+        if (generation !== loadGenerationRef.current) return
+        setError('Failed to load print groups')
+      })
   }, [projectId, setPrintGroups])
 
   async function handleCreate(event: FormEvent<HTMLFormElement>) {
@@ -31,6 +42,9 @@ export function PrintGroupPanel({ projectId }: PrintGroupPanelProps) {
     setError(null)
     try {
       const created = await createPrintGroup(projectId, trimmed)
+      // Invalidates any still-in-flight initial load so it can never overwrite this local change
+      // once it eventually resolves (CodeRabbit finding, PR7 #48).
+      loadGenerationRef.current += 1
       setPrintGroups([...useEditorStore.getState().printGroups, created])
       setName('')
     } catch {
@@ -42,7 +56,8 @@ export function PrintGroupPanel({ projectId }: PrintGroupPanelProps) {
     setError(null)
     try {
       await deletePrintGroup(id)
-      setPrintGroups(useEditorStore.getState().printGroups.filter((group) => group.id !== id))
+      loadGenerationRef.current += 1
+      removePrintGroup(id)
     } catch {
       setError('Failed to delete print group')
     }

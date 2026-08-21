@@ -33,7 +33,7 @@ it('renders a same-origin pieces export download link, no fetch/JS trigger neede
 })
 
 it('captures on click, polls status, and only enables/shows the download once COMPLETED — never for PENDING/RUNNING/FAILED', async () => {
-  captureCombinedExportMock.mockResolvedValue({ exportId: 'export-1' })
+  captureCombinedExportMock.mockResolvedValue({ id: 'export-1' })
   fetchCombinedExportStatusMock.mockResolvedValue({ status: 'PENDING' })
   vi.useFakeTimers()
 
@@ -62,7 +62,7 @@ it('captures on click, polls status, and only enables/shows the download once CO
 })
 
 it('surfaces a FAILED status with its error message, stops polling, and never shows a download link', async () => {
-  captureCombinedExportMock.mockResolvedValue({ exportId: 'export-1' })
+  captureCombinedExportMock.mockResolvedValue({ id: 'export-1' })
   fetchCombinedExportStatusMock.mockResolvedValue({ status: 'FAILED', errorMessage: 'union failed' })
   vi.useFakeTimers()
 
@@ -77,4 +77,67 @@ it('surfaces a FAILED status with its error message, stops polling, and never sh
   const callsAtTerminal = fetchCombinedExportStatusMock.mock.calls.length
   await flush(10000)
   expect(fetchCombinedExportStatusMock).toHaveBeenCalledTimes(callsAtTerminal)
+})
+
+it('stops polling and surfaces an error after enough consecutive poll failures (CodeRabbit finding, PR7 #48)', async () => {
+  captureCombinedExportMock.mockResolvedValue({ id: 'export-1' })
+  fetchCombinedExportStatusMock.mockRejectedValue(new Error('network blip'))
+  vi.useFakeTimers()
+
+  render(<ExportPanel printGroupId="group-1" />)
+  fireEvent.click(screen.getByRole('button', { name: 'Start combined export' }))
+  await flush()
+  expect(screen.getByRole('status')).toHaveTextContent('PENDING')
+
+  // 5 consecutive failures trips the limit; each tick is one failed attempt.
+  await flush(2000)
+  await flush(2000)
+  await flush(2000)
+  await flush(2000)
+  await flush(2000)
+
+  expect(screen.getByRole('alert')).toHaveTextContent(/lost connection/i)
+  const callsAtLimit = fetchCombinedExportStatusMock.mock.calls.length
+  await flush(10000)
+  expect(fetchCombinedExportStatusMock).toHaveBeenCalledTimes(callsAtLimit) // polling actually stopped
+})
+
+it('a single transient poll failure does not reset progress and a later success still completes (no false alarm)', async () => {
+  captureCombinedExportMock.mockResolvedValue({ id: 'export-1' })
+  fetchCombinedExportStatusMock.mockRejectedValueOnce(new Error('one-off blip'))
+  fetchCombinedExportStatusMock.mockResolvedValue({ status: 'COMPLETED' })
+  vi.useFakeTimers()
+
+  render(<ExportPanel printGroupId="group-1" />)
+  fireEvent.click(screen.getByRole('button', { name: 'Start combined export' }))
+  await flush()
+  await flush(2000) // fails once, but under the limit — no error shown
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+
+  await flush(2000) // succeeds
+  expect(screen.getByRole('status')).toHaveTextContent('COMPLETED')
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+})
+
+it('disables the capture button while a capture is in flight, preventing a concurrent second capture (CodeRabbit/Codex finding, PR7 #48)', async () => {
+  let resolveCapture!: (value: { id: string }) => void
+  captureCombinedExportMock.mockImplementationOnce(
+    () => new Promise((resolve) => { resolveCapture = resolve })
+  )
+
+  render(<ExportPanel printGroupId="group-1" />)
+  const button = screen.getByRole('button', { name: 'Start combined export' })
+
+  fireEvent.click(button)
+  await flush()
+  expect(button).toBeDisabled()
+  expect(captureCombinedExportMock).toHaveBeenCalledTimes(1)
+
+  fireEvent.click(button) // must be a no-op: the button is disabled while capturing
+  await flush()
+  expect(captureCombinedExportMock).toHaveBeenCalledTimes(1)
+
+  resolveCapture({ id: 'export-1' })
+  await flush()
+  expect(button).not.toBeDisabled()
 })

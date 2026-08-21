@@ -1,6 +1,7 @@
 import { Euler, MathUtils, Quaternion } from 'three'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { hasPendingAssets, resetEditorStore, useEditorStore } from './store'
+import type { SceneObjectDto } from './store'
 
 const identityQuaternion: [number, number, number, number] = [0, 0, 0, 1]
 
@@ -142,6 +143,54 @@ describe('print group / level assignment', () => {
     })
     expect(useEditorStore.getState().objects[0]).toMatchObject({ printGroupId: 'group-1', levelId: 'level-1' })
     expect(useEditorStore.getState().toSceneDto().objects[0]).toMatchObject({ printGroupId: 'group-1', levelId: 'level-1' })
+  })
+
+  it('removePrintGroup atomically drops the group and clears every dangling assignment to it (CodeRabbit/Codex finding, PR7 #48)', () => {
+    useEditorStore.getState().setPrintGroups([
+      { id: 'group-1', name: 'Group 1' },
+      { id: 'group-2', name: 'Group 2' },
+    ])
+    const assigned = useEditorStore.getState().insert('asset-1')
+    const otherAssigned = useEditorStore.getState().insert('asset-2')
+    const unrelated = useEditorStore.getState().insert('asset-3')
+    useEditorStore.getState().assignPrintGroup(assigned, 'group-1')
+    useEditorStore.getState().assignPrintGroup(otherAssigned, 'group-1')
+    useEditorStore.getState().assignPrintGroup(unrelated, 'group-2')
+
+    useEditorStore.getState().removePrintGroup('group-1')
+
+    const of = (objId: number) => useEditorStore.getState().objects.find((o) => o.id === objId)
+    expect(useEditorStore.getState().printGroups).toEqual([{ id: 'group-2', name: 'Group 2' }])
+    expect(of(assigned)?.printGroupId).toBeNull() // was pointing at the deleted group
+    expect(of(otherAssigned)?.printGroupId).toBeNull() // likewise
+    expect(of(unrelated)?.printGroupId).toBe('group-2') // untouched: never referenced group-1
+
+    // A save right after deletion must never resend the deleted group's id.
+    expect(useEditorStore.getState().toSceneDto().objects.map((o) => o.printGroupId)).not.toContain('group-1')
+  })
+
+  it('loadScene normalizes a missing printGroupId/levelId (pre-existing scenes) to explicit null, not undefined (CodeRabbit finding, PR7 #48)', () => {
+    useEditorStore.getState().loadScene({
+      objects: [
+        {
+          id: 7,
+          assetId: 'asset-old',
+          matrixContractVersion: 1,
+          translationMm: [0, 0, 0],
+          quaternionXyzw: identityQuaternion,
+          scale: [1, 1, 1],
+          matrixWorldColumnMajor: new Array(16).fill(0),
+          // Simulates a scene saved before this change: field absent entirely, not null.
+        } as unknown as SceneObjectDto,
+      ],
+    })
+
+    expect(useEditorStore.getState().objects[0].printGroupId).toBeNull()
+    expect(useEditorStore.getState().objects[0].levelId).toBeNull()
+    // The round-trip must serialize an explicit null, which JSON.stringify keeps as a key —
+    // omitting it (as undefined would) is exactly the bug this test guards against.
+    expect(JSON.stringify(useEditorStore.getState().toSceneDto())).toContain('"printGroupId":null')
+    expect(JSON.stringify(useEditorStore.getState().toSceneDto())).toContain('"levelId":null')
   })
 })
 

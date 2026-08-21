@@ -70,3 +70,24 @@ it('shows no assignment control until an object is selected (design D6), then as
   fireEvent.change(select, { target: { value: '' } })
   expect(useEditorStore.getState().objects.find((o) => o.id === id)?.printGroupId).toBeNull()
 })
+
+it('clears an assigned object\'s printGroupId when its group is deleted (CodeRabbit/Codex finding, PR7 #48)', async () => {
+  fetchPrintGroupsMock.mockResolvedValue([{ id: 'group-1', name: 'Group 1' }])
+  deletePrintGroupMock.mockResolvedValue(undefined)
+  render(<PrintGroupPanel projectId="project-1" />)
+  await waitFor(() => expect(screen.getByText('Group 1')).toBeInTheDocument())
+
+  let id = 0
+  act(() => {
+    id = useEditorStore.getState().insert('asset-1')
+    useEditorStore.getState().assignPrintGroup(id, 'group-1')
+  })
+  expect(useEditorStore.getState().objects.find((o) => o.id === id)?.printGroupId).toBe('group-1')
+
+  fireEvent.click(screen.getByRole('button', { name: 'Delete Group 1' }))
+  await waitFor(() => expect(screen.queryByText('Group 1')).not.toBeInTheDocument())
+
+  // The object must no longer reference the now-deleted group, or the next scene save would
+  // resend a UUID that violates scene_objects_print_group_project_fkey.
+  expect(useEditorStore.getState().objects.find((o) => o.id === id)?.printGroupId).toBeNull()
+})

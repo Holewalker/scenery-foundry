@@ -109,7 +109,11 @@ export async function deletePrintGroup(id: string): Promise<void> {
 }
 
 export interface CombinedExportCapture {
-  exportId: string
+  // Matches ExportController.capture()'s actual response body (backend/.../ExportController.java:44:
+  // Map.of("id", exportId.toString())) — NOT `exportId` (Codex/CodeRabbit finding on PR7, #48: the
+  // previous field name here never matched the wire shape, so every real capture silently produced
+  // `undefined` and the feature never worked end-to-end).
+  id: string
 }
 
 export async function captureCombinedExport(printGroupId: string): Promise<CombinedExportCapture> {

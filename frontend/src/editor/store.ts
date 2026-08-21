@@ -140,6 +140,7 @@ export interface EditorState {
   setLevels: (levels: LevelSummary[]) => void
   assignPrintGroup: (id: number, printGroupId: string | null) => void
   assignLevel: (id: number, levelId: string | null) => void
+  removePrintGroup: (groupId: string) => void
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
@@ -198,8 +199,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           translationMm: object.translationMm,
           quaternionXyzw: object.quaternionXyzw,
           scale: object.scale,
-          printGroupId: object.printGroupId,
-          levelId: object.levelId,
+          // Scenes saved before this change carry neither field at all (undefined, not null),
+          // even though SceneObjectDto types them as `string | null` (CodeRabbit finding, PR7
+          // #48) — normalize here so toSceneDto() always round-trips an explicit null instead of
+          // JSON.stringify silently omitting the key on the next save.
+          printGroupId: object.printGroupId ?? null,
+          levelId: object.levelId ?? null,
         })),
       selectedId: null,
       dirty: false,
@@ -231,6 +236,19 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   assignLevel: (id, levelId) =>
     set((state) => ({
       objects: state.objects.map((object) => (object.id === id ? { ...object, levelId } : object)),
+      dirty: true,
+    })),
+  // Atomically removes the group AND clears every object's now-dangling reference to it
+  // (CodeRabbit/Codex finding on PR7, #48): the backend clears scene_objects.print_group_id on
+  // delete, but local state held a stale UUID that the next scene save would send right back,
+  // violating scene_objects_print_group_project_fkey. One set() call, not two separate ones, so
+  // no intermediate render ever shows the group gone but the assignment still pointing at it.
+  removePrintGroup: (groupId) =>
+    set((state) => ({
+      printGroups: state.printGroups.filter((group) => group.id !== groupId),
+      objects: state.objects.map((object) =>
+        object.printGroupId === groupId ? { ...object, printGroupId: null } : object
+      ),
       dirty: true,
     })),
 }))
