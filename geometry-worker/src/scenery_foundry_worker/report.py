@@ -30,6 +30,28 @@ def build_report(result: GeometryCheckResult, original_sha256: str) -> dict:
     }
 
 
+def build_combined_report(
+    result: GeometryCheckResult,
+    *,
+    checksum: str,
+    piece_count: int,
+    export_status: str = "COMPLETED",
+) -> dict:
+    """Combined Export diagnostics report (task 6.9/6.10). Deliberately omits the top-level
+    `geometryStatus` key: that key is `AssetProjector`'s contract for a single asset, and this
+    result is a merged, multi-piece artifact of a different job type (Phase 4 design)."""
+    return {
+        "exportStatus": export_status,
+        "pieceCount": piece_count,
+        "triangleCount": result.triangle_count,
+        "checksum": checksum,
+        "boundsMin": result.bounds_min,
+        "boundsMax": result.bounds_max,
+        "volumeMm3": result.volume_mm3,
+        "diagnostics": _aggregate_and_order(result.diagnostics),
+    }
+
+
 def canonical_report_bytes(report: dict) -> bytes:
     # Defense in depth (ADR-0006/D4): geometry_checks.py already resolves non-finite measurements
     # to `None` before a report reaches here, so this should never fire in practice. `allow_nan=False`
