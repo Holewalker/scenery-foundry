@@ -91,14 +91,57 @@ describe('editor store', () => {
   it('reconstructs deterministic state from a saved scene on reload', () => {
     useEditorStore.getState().loadScene({
       objects: [
-        { id: 5, assetId: 'asset-a', matrixContractVersion: 1, translationMm: [1, 2, 3], quaternionXyzw: identityQuaternion, scale: [1, 1, 1], matrixWorldColumnMajor: new Array(16).fill(0) },
-        { id: 2, assetId: 'asset-b', matrixContractVersion: 1, translationMm: [0, 0, 0], quaternionXyzw: identityQuaternion, scale: [1, 1, 1], matrixWorldColumnMajor: new Array(16).fill(0) },
+        { id: 5, assetId: 'asset-a', matrixContractVersion: 1, translationMm: [1, 2, 3], quaternionXyzw: identityQuaternion, scale: [1, 1, 1], matrixWorldColumnMajor: new Array(16).fill(0), printGroupId: 'group-1', levelId: null },
+        { id: 2, assetId: 'asset-b', matrixContractVersion: 1, translationMm: [0, 0, 0], quaternionXyzw: identityQuaternion, scale: [1, 1, 1], matrixWorldColumnMajor: new Array(16).fill(0), printGroupId: null, levelId: 'level-1' },
       ],
     })
     expect(useEditorStore.getState().objects.map((object) => object.id)).toEqual([2, 5])
     expect(useEditorStore.getState().dirty).toBe(false)
     expect(useEditorStore.getState().selectedId).toBeNull()
     expect(useEditorStore.getState().insert('asset-c')).toBe(6)
+  })
+})
+
+describe('print group / level assignment', () => {
+  it('assigns/reassigns/unassigns print group and level independently, without affecting other objects (single-group, dirty-tracked)', () => {
+    const id = useEditorStore.getState().insert('asset-1')
+    const otherId = useEditorStore.getState().insert('asset-2')
+    const of = (objId: number) => useEditorStore.getState().objects.find((o) => o.id === objId)
+    expect(of(id)?.printGroupId).toBeNull()
+    expect(of(id)?.levelId).toBeNull()
+
+    useEditorStore.getState().assignPrintGroup(id, 'group-1')
+    useEditorStore.getState().assignPrintGroup(otherId, 'group-1')
+    expect(of(id)?.printGroupId).toBe('group-1')
+    expect(useEditorStore.getState().dirty).toBe(true)
+
+    useEditorStore.getState().assignPrintGroup(id, 'group-2')
+    expect(of(id)?.printGroupId).toBe('group-2')
+    useEditorStore.getState().assignPrintGroup(id, null)
+    expect(of(id)?.printGroupId).toBeNull()
+    expect(of(otherId)?.printGroupId).toBe('group-1') // unaffected by id's reassignment/unassignment
+
+    useEditorStore.getState().assignLevel(id, 'level-1')
+    expect(of(id)?.levelId).toBe('level-1')
+    useEditorStore.getState().assignLevel(id, 'level-2')
+    expect(of(id)?.levelId).toBe('level-2')
+    useEditorStore.getState().assignLevel(id, null)
+    expect(of(id)?.levelId).toBeNull()
+  })
+
+  it('sets the print groups/levels catalogs, and round-trips printGroupId/levelId through loadScene and toSceneDto', () => {
+    useEditorStore.getState().setPrintGroups([{ id: 'group-1', name: 'Group 1' }])
+    useEditorStore.getState().setLevels([{ id: 'level-1', name: 'Level 1' }])
+    expect(useEditorStore.getState().printGroups).toEqual([{ id: 'group-1', name: 'Group 1' }])
+    expect(useEditorStore.getState().levels).toEqual([{ id: 'level-1', name: 'Level 1' }])
+
+    useEditorStore.getState().loadScene({
+      objects: [
+        { id: 5, assetId: 'asset-a', matrixContractVersion: 1, translationMm: [1, 2, 3], quaternionXyzw: identityQuaternion, scale: [1, 1, 1], matrixWorldColumnMajor: new Array(16).fill(0), printGroupId: 'group-1', levelId: 'level-1' },
+      ],
+    })
+    expect(useEditorStore.getState().objects[0]).toMatchObject({ printGroupId: 'group-1', levelId: 'level-1' })
+    expect(useEditorStore.getState().toSceneDto().objects[0]).toMatchObject({ printGroupId: 'group-1', levelId: 'level-1' })
   })
 })
 

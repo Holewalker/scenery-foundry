@@ -1,4 +1,4 @@
-import type { AssetSummary, SceneDto } from '../editor/store'
+import type { AssetSummary, PrintGroupSummary, SceneDto } from '../editor/store'
 
 interface CsrfToken {
   token: string
@@ -85,4 +85,49 @@ export async function saveScene(projectId: string, scene: SceneDto): Promise<Sce
   })
   if (!response.ok) throw new Error('failed to save scene')
   return response.json() as Promise<SceneDto>
+}
+
+export async function fetchPrintGroups(projectId: string): Promise<PrintGroupSummary[]> {
+  const response = await apiFetch(`/api/projects/${projectId}/print-groups`)
+  if (!response.ok) throw new Error('failed to fetch print groups')
+  return response.json() as Promise<PrintGroupSummary[]>
+}
+
+export async function createPrintGroup(projectId: string, name: string): Promise<PrintGroupSummary> {
+  const response = await apiFetch(`/api/projects/${projectId}/print-groups`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+  if (!response.ok) throw new Error('failed to create print group')
+  return response.json() as Promise<PrintGroupSummary>
+}
+
+export async function deletePrintGroup(id: string): Promise<void> {
+  const response = await apiFetch(`/api/print-groups/${id}`, { method: 'DELETE' })
+  if (!response.ok) throw new Error('failed to delete print group')
+}
+
+export interface CombinedExportCapture {
+  exportId: string
+}
+
+export async function captureCombinedExport(printGroupId: string): Promise<CombinedExportCapture> {
+  const response = await apiFetch(`/api/print-groups/${printGroupId}/combined-exports`, { method: 'POST' })
+  if (!response.ok) throw new Error('failed to capture combined export')
+  return response.json() as Promise<CombinedExportCapture>
+}
+
+export type CombinedExportStatusValue = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED'
+
+export interface CombinedExportStatus {
+  status: CombinedExportStatusValue
+  errorCode?: string | null
+  errorMessage?: string | null
+}
+
+export async function fetchCombinedExportStatus(exportId: string): Promise<CombinedExportStatus> {
+  const response = await apiFetch(`/api/combined-exports/${exportId}/status`)
+  if (!response.ok) throw new Error('failed to fetch combined export status')
+  return response.json() as Promise<CombinedExportStatus>
 }
