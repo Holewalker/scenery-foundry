@@ -164,7 +164,7 @@ def _fold_union(pieces: list[PieceInput]) -> Manifold:
 
 
 def _validate_merged(
-    merged: Manifold, data_root: Path, job_id, pieces: list[PieceInput]
+    merged: Manifold, data_root: Path, job_id, claim_token, pieces: list[PieceInput]
 ) -> tuple[GeometryCheckResult, Path]:
     """ADR-0006 Combined Export post-union gate (task 6.8): export -> reload -> re-check checks
     3-8 first (never trust the in-memory Manifold blindly). Correction (this batch) ADDS the
@@ -174,7 +174,12 @@ def _validate_merged(
     if check.geometry_status != "VALID_VOLUME":
         raise CombinedExportError(_error_code_for(check))
 
-    stl_path = data_root / "tmp" / str(job_id) / "combined.stl"
+    # Namespaced by claim_token, not just job_id (Codex finding on PR6, #47): matches the exact
+    # precedent already established in pipeline.py's tmp_glb path. Without this, a job reclaimed
+    # after its lease expires (ADR-0005) would race the original attempt's write to the SAME temp
+    # file — the fenced finalize (id+status+claim_token) still protects the DB row, but a shared
+    # temp path lets two live attempts corrupt or delete each other's in-progress candidate file.
+    stl_path = data_root / "tmp" / str(job_id) / str(claim_token) / "combined.stl"
     stl_path.parent.mkdir(parents=True, exist_ok=True)
     stl_path.write_bytes(merged_mesh.export(file_type="stl"))
 
@@ -270,7 +275,7 @@ def process_combined_export_job(job: ClaimedJob, data_root: Path) -> PipelineRes
         pieces = [_verify_piece(data_root, obj) for obj in objects]
         _check_accumulated_input_triangle_limit(pieces)
         merged = _fold_union(pieces)
-        check, stl_path = _validate_merged(merged, data_root, job.id, pieces)
+        check, stl_path = _validate_merged(merged, data_root, job.id, job.claim_token, pieces)
     except CombinedExportError as error:
         return _combined_failed(error.error_code, piece_count, error.details)
 

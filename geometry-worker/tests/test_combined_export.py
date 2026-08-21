@@ -164,12 +164,37 @@ def test_fold_union_fails_naming_both_offending_scene_object_ids_on_a_bad_step(m
     assert exc_info.value.details["sceneObjectIds"] == [4, 4]
 
 
+def test_validate_merged_namespaces_the_temp_path_by_claim_token_not_just_job_id(tmp_path):
+    """Codex finding on PR6 (#47): a job reclaimed after its lease expires (ADR-0005) shares the
+    same job_id as the original attempt but gets a fresh claim_token. If the temp path were keyed
+    by job_id alone, both attempts would race the same file; keying by (job_id, claim_token)
+    matches pipeline.py's already-established tmp_glb precedent and isolates them."""
+    piece_a = _piece(1, [10, 10, 10])
+    piece_b = _piece(2, [10, 10, 10], translation=(5.0, 0.0, 0.0))
+    merged_first = _fold_union([piece_a, piece_b])
+    merged_second = _fold_union([piece_a, piece_b])
+
+    pieces = [piece_a, piece_b]
+    _, first_path = _validate_merged(
+        merged_first, tmp_path, job_id="job-1", claim_token="token-original", pieces=pieces
+    )
+    _, second_path = _validate_merged(
+        merged_second, tmp_path, job_id="job-1", claim_token="token-reclaimed", pieces=pieces
+    )
+
+    assert first_path != second_path
+    assert first_path.exists()
+    assert second_path.exists()
+
+
 def test_validate_merged_export_reload_recheck_succeeds_for_a_watertight_union(tmp_path):
     piece_a = _piece(1, [10, 10, 10])
     piece_b = _piece(2, [10, 10, 10], translation=(5.0, 0.0, 0.0))
     merged = _fold_union([piece_a, piece_b])
 
-    check, stl_path = _validate_merged(merged, tmp_path, job_id="job-1", pieces=[piece_a, piece_b])
+    check, stl_path = _validate_merged(
+        merged, tmp_path, job_id="job-1", claim_token="token-1", pieces=[piece_a, piece_b]
+    )
 
     assert check.geometry_status == "VALID_VOLUME"
     assert stl_path.exists()
@@ -196,7 +221,9 @@ def test_validate_merged_fails_output_triangle_limit_exceeded(tmp_path, monkeypa
     merged = _fold_union([piece_a, piece_b])
 
     with pytest.raises(CombinedExportError) as exc_info:
-        _validate_merged(merged, tmp_path, job_id="job-2", pieces=[piece_a, piece_b])
+        _validate_merged(
+            merged, tmp_path, job_id="job-2", claim_token="token-2", pieces=[piece_a, piece_b]
+        )
 
     assert exc_info.value.error_code == "COMBINED_OUTPUT_LIMIT_EXCEEDED"
 
@@ -221,7 +248,9 @@ def test_validate_merged_fails_roundtrip_mismatch_when_reloaded_bounds_shift(tmp
     monkeypatch.setattr(combined_export, "load_stl_for_analysis", _shifted_load)
 
     with pytest.raises(CombinedExportError) as exc_info:
-        _validate_merged(merged, tmp_path, job_id="job-3", pieces=[piece_a, piece_b])
+        _validate_merged(
+            merged, tmp_path, job_id="job-3", claim_token="token-3", pieces=[piece_a, piece_b]
+        )
 
     assert exc_info.value.error_code == "COMBINED_ROUNDTRIP_MISMATCH"
 
