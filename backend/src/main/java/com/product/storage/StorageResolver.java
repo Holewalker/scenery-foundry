@@ -81,6 +81,16 @@ public final class StorageResolver {
         }
     }
 
+    /** Returns the on-disk byte length of {@code storageKey} without opening a stream (pieces-export byte-cap check). */
+    public long size(String storageKey) {
+        var resolved = walk(storageKey);
+        try {
+            return Files.size(resolved);
+        } catch (IOException exception) {
+            throw new StorageAccessException(storageKey);
+        }
+    }
+
     /** Opens a read stream for {@code storageKey}. The CALLER (or a framework converter) closes it. */
     public InputStream openInputStream(String storageKey) {
         var resolved = walk(storageKey);
