@@ -128,6 +128,21 @@ public final class StorageResolver {
         }
     }
 
+    /**
+     * Best-effort delete used only to compensate a partially-completed multi-step write — e.g. a snapshot
+     * already published to storage just before a later step in the same logical operation failed and rolled
+     * back its database rows, which a transaction cannot reach outside the database (CodeRabbit finding on
+     * PR5, #46). Failure to delete is swallowed: a leaked artifact keyed by a random, otherwise-unreferenced
+     * UUID is not a correctness issue, matching {@link #publish}'s own best-effort temp-cleanup philosophy.
+     */
+    public void deleteQuietly(String storageKey) {
+        try {
+            Files.deleteIfExists(walk(storageKey));
+        } catch (IOException ignored) {
+            // best-effort; see javadoc
+        }
+    }
+
     private Path walk(String storageKey) {
         var segments = splitSegments(storageKey);
         var current = root;
