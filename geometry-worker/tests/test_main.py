@@ -1,8 +1,10 @@
+import json
 from unittest.mock import patch
+from uuid import uuid4
 
 import pytest
 import trimesh
-from conftest import insert_job, insert_owner
+from conftest import insert_combined_export_job, insert_job, insert_owner
 
 from scenery_foundry_worker.claim import sha256_hex
 from scenery_foundry_worker.main import main, run_once
@@ -90,3 +92,122 @@ def test_main_exits_immediately_when_worker_database_url_is_missing_before_insta
             main()
 
     mock_signal.assert_not_called()
+
+
+_IDENTITY_MATRIX = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+
+
+def _snapshot_object(scene_object_id: int, storage_key: str, sha256: str) -> dict:
+    return {
+        "scene_object_id": scene_object_id,
+        "asset_id": str(uuid4()),
+        "original_storage_key": storage_key,
+        "original_sha256": sha256,
+        "matrix_contract_version": 1,
+        "matrix_world_column_major": _IDENTITY_MATRIX,
+    }
+
+
+def _write_snapshot(tmp_path, export_id, objects: list[dict]) -> bytes:
+    snapshot = {"snapshot_version": 1, "export_id": str(export_id), "objects": objects}
+    snapshot_bytes = json.dumps(snapshot).encode("utf-8")
+    (tmp_path / "exports" / str(export_id)).mkdir(parents=True)
+    (tmp_path / "exports" / str(export_id) / "snapshot.json").write_bytes(snapshot_bytes)
+    return snapshot_bytes
+
+
+def _seed_combined_export_job(db_connection, tmp_path, *, piece_b_open: bool = False):
+    """Seeds a real Postgres `geometry_jobs` COMBINED_EXPORT row plus its snapshot + piece STLs.
+    `piece_b_open` swaps piece 2 for an open (non-watertight) box, to exercise task 6.5's
+    all-or-nothing re-eligibility failure. Returns `(job_id, export_id)`."""
+    owner_id = insert_owner(db_connection)
+    export_id = uuid4()
+    box_a = trimesh.creation.box(extents=[10, 10, 10]).export(file_type="stl")
+    template = trimesh.creation.box(extents=[10, 10, 10])
+    if piece_b_open:
+        open_box = trimesh.Trimesh(
+            vertices=template.vertices, faces=template.faces[:-2], process=False
+        )
+        box_b = open_box.export(file_type="stl")
+    else:
+        template.apply_translation((5.0, 0.0, 0.0))
+        box_b = template.export(file_type="stl")
+    (tmp_path / "assets" / "a").mkdir(parents=True)
+    (tmp_path / "assets" / "b").mkdir(parents=True)
+    (tmp_path / "assets" / "a" / "original.stl").write_bytes(box_a)
+    (tmp_path / "assets" / "b" / "original.stl").write_bytes(box_b)
+    snapshot_bytes = _write_snapshot(
+        tmp_path,
+        export_id,
+        [
+            _snapshot_object(1, "assets/a/original.stl", sha256_hex(box_a)),
+            _snapshot_object(2, "assets/b/original.stl", sha256_hex(box_b)),
+        ],
+    )
+    job_id = insert_combined_export_job(
+        db_connection, owner_id, export_id=export_id, snapshot_sha256=sha256_hex(snapshot_bytes)
+    )
+    return job_id, export_id
+
+
+def test_run_once_claims_processes_and_publishes_a_combined_export_union_job(
+    db_connection, tmp_path
+):
+    """Task 6.11: full union job end-to-end against a real seeded `geometry_jobs` row, publishing
+    via the existing 'publish, never replace' storage convention to `exports/{id}/combined.stl`.
+    """
+    job_id, export_id = _seed_combined_export_job(db_connection, tmp_path)
+
+    handled = run_once(db_connection, tmp_path, worker_id="worker-test")
+
+    assert handled is True
+    with db_connection.cursor() as cur:
+        cur.execute(
+            "SELECT status, output_storage_key, diagnostics->>'exportStatus' "
+            "FROM geometry_jobs WHERE id = %s",
+            [job_id],
+        )
+        row = cur.fetchone()
+    assert row == ("COMPLETED", f"exports/{export_id}/combined.stl", "COMPLETED")
+    assert (tmp_path / "exports" / str(export_id) / "combined.stl").exists()
+
+
+def test_run_once_fails_the_whole_combined_export_job_naming_the_offending_scene_object_id(
+    db_connection, tmp_path
+):
+    """D3 all-or-nothing: one re-eligibility failure (piece 2's mesh is no longer watertight) fails
+    the ENTIRE job, no partial/best-effort combined.stl is ever published, and diagnostics name the
+    exact offending `sceneObjectId`."""
+    job_id, export_id = _seed_combined_export_job(db_connection, tmp_path, piece_b_open=True)
+
+    handled = run_once(db_connection, tmp_path, worker_id="worker-test")
+
+    assert handled is True
+    with db_connection.cursor() as cur:
+        cur.execute(
+            "SELECT status, error_code, diagnostics->'details'->>'sceneObjectId' "
+            "FROM geometry_jobs WHERE id = %s",
+            [job_id],
+        )
+        row = cur.fetchone()
+    assert row == ("FAILED", "COMBINED_INPUT_INELIGIBLE", "2")
+    assert not (tmp_path / "exports" / str(export_id) / "combined.stl").exists()
+
+
+def test_claim_next_rotates_the_try_order_by_poll_index():
+    """Task 6.2: rotating claim order per poll — an odd `poll_index` tries COMBINED_EXPORT before
+    ASSET_PROCESSING, so a saturated asset queue cannot starve exports on this single-worker
+    loop."""
+    from scenery_foundry_worker.main import JOB_TYPES, _claim_next
+
+    tried: list[str] = []
+
+    def fake_claim_job(_conn, job_type, _worker_id, _lease_seconds):
+        tried.append(job_type)
+        return None
+
+    with patch("scenery_foundry_worker.main.claim_job", side_effect=fake_claim_job):
+        _claim_next(None, "worker-test", 120, poll_index=0)
+        _claim_next(None, "worker-test", 120, poll_index=1)
+
+    assert tried == [*JOB_TYPES, *reversed(JOB_TYPES)]

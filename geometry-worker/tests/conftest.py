@@ -23,7 +23,7 @@ CREATE TABLE users (id uuid PRIMARY KEY);
 CREATE TABLE geometry_jobs (
     id uuid PRIMARY KEY,
     owner_id uuid NOT NULL REFERENCES users(id),
-    job_type varchar(32) NOT NULL CHECK (job_type IN ('ASSET_PROCESSING')),
+    job_type varchar(32) NOT NULL CHECK (job_type IN ('ASSET_PROCESSING','COMBINED_EXPORT')),
     subject_id uuid NOT NULL,
     status varchar(16) NOT NULL
         CHECK (status IN ('PENDING','RUNNING','RETRY_WAIT','COMPLETED','FAILED')),
@@ -114,6 +114,42 @@ def insert_job(
             "(id, owner_id, job_type, subject_id, status, priority, payload, idempotency_key) "
             "VALUES (%s, %s, 'ASSET_PROCESSING', %s, %s, %s, %s::jsonb, %s)",
             [job_id, owner_id, subject_id, status, priority, payload, str(job_id)],
+        )
+    conn.commit()
+    return job_id
+
+
+def insert_combined_export_job(
+    conn,
+    owner_id: uuid.UUID,
+    *,
+    export_id: uuid.UUID | None = None,
+    snapshot_storage_key: str | None = None,
+    snapshot_sha256: str = "a" * 64,
+) -> uuid.UUID:
+    """Seeds one COMBINED_EXPORT `geometry_jobs` row (Phase 4/PR6), mirroring
+    `JdbcCaptureProjectionService.payloadJson`'s exact envelope shape."""
+    job_id = uuid.uuid4()
+    export_id = export_id or uuid.uuid4()
+    storage_key = snapshot_storage_key or f"exports/{export_id}/snapshot.json"
+    payload = json.dumps(
+        {
+            "contract": "scenery-foundry.geometry-job",
+            "version": 1,
+            "jobType": "COMBINED_EXPORT",
+            "jobId": str(job_id),
+            "subjectId": str(export_id),
+            "input": {"storageKey": storage_key, "sha256": snapshot_sha256},
+            "output": {"directory": f"exports/{export_id}"},
+            "options": {"geometryPolicyVersion": 1, "booleanEngine": "manifold3d"},
+        }
+    )
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO geometry_jobs "
+            "(id, owner_id, job_type, subject_id, status, payload, idempotency_key) "
+            "VALUES (%s, %s, 'COMBINED_EXPORT', %s, 'PENDING', %s::jsonb, %s)",
+            [job_id, owner_id, export_id, payload, str(export_id)],
         )
     conn.commit()
     return job_id
