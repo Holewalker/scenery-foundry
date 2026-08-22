@@ -56,9 +56,14 @@ export function App() {
       const scene = await fetchScene(projectId)
       loadScene(scene)
       schedulerRef.current?.reload()
+      setError(null) // clears a stale failed-reload message from an earlier failed attempt
     } catch {
       setError('Failed to reload the scene.')
     }
+  }
+
+  function handleRetrySave() {
+    schedulerRef.current?.retry()
   }
 
   useEffect(() => {
@@ -88,6 +93,7 @@ export function App() {
         setSaveError: (message) => useEditorStore.getState().setError(message),
       },
       saveScene,
+      fetchScene,
     })
     schedulerRef.current = scheduler
 
@@ -166,55 +172,72 @@ export function App() {
     )
   }
 
+  // While the conflict modal is open, the rest of the editor is marked `inert` (mouse/keyboard
+  // unreachable, hidden from assistive tech) so SaveStatus's own Tab-trap inside the dialog is
+  // backed by a real modality barrier, not just a visual one.
+  const backgroundInert = saveState === 'conflict'
+
   return (
     <div className="editor-shell">
       <header className="app-bar">
         <h1>Scenery Foundry</h1>
-        <SaveStatus dirty={dirty} saveState={saveState} errorMessage={saveError} onReload={handleReloadAfterConflict} />
+        <SaveStatus
+          dirty={dirty}
+          saveState={saveState}
+          errorMessage={saveError}
+          onReload={handleReloadAfterConflict}
+          onRetry={handleRetrySave}
+        />
       </header>
-      <aside className="panel">
-        <AssetUpload />
-        <AssetCatalog assets={assets} />
-        <PrintGroupPanel projectId={projectId} />
-      </aside>
-      <section className="viewport">
-        <EditorCanvas />
-      </section>
-      <footer className="editor-toolbar">
-        <button type="button" aria-pressed={mode === 'translate'} onClick={() => setMode('translate')}>
-          <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16">
-            <path d="M8 1v14M1 8h14M4 4L1 8l3 4M12 4l3 4-3 4M4 12l4 3 4-3M4 4l4-3 4 3" />
-          </svg>
-          Move
-        </button>
-        <button type="button" aria-pressed={mode === 'rotate'} onClick={() => setMode('rotate')}>
-          <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16">
-            <path d="M13 8A5 5 0 1 1 8 3" />
-            <path d="M8 1l3 2-3 2" />
-          </svg>
-          Rotate
-        </button>
-        <button type="button" aria-pressed={snapEnabled} onClick={toggleSnap}>
-          <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16">
-            <path d="M1 5h14M1 11h14M5 1v14M11 1v14" />
-          </svg>
-          Snap
-        </button>
-        <button type="button" className="danger" onClick={handleDelete} disabled={selectedId === null}>
-          <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16">
-            <path d="M2 4h12M6 4V2h4v2M4 4l1 10h6l1-10" />
-          </svg>
-          Delete
-        </button>
-        <button type="button" onClick={handleSave} disabled={saveDisabled}>
-          <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16">
-            <path d="M2 2h9l3 3v9H2z" />
-            <path d="M5 2v4h5V2M4 14v-5h8v5" />
-          </svg>
-          {saving ? 'Saving…' : 'Save'}
-        </button>
-      </footer>
-      {error && <p role="alert">{error}</p>}
+      <div className="editor-content" inert={backgroundInert}>
+        <aside className="panel">
+          <AssetUpload />
+          <AssetCatalog assets={assets} />
+          <PrintGroupPanel projectId={projectId} />
+        </aside>
+        <section className="viewport">
+          <EditorCanvas />
+        </section>
+        <footer className="editor-toolbar">
+          <button type="button" aria-pressed={mode === 'translate'} onClick={() => setMode('translate')}>
+            <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16">
+              <path d="M8 1v14M1 8h14M4 4L1 8l3 4M12 4l3 4-3 4M4 12l4 3 4-3M4 4l4-3 4 3" />
+            </svg>
+            Move
+          </button>
+          <button type="button" aria-pressed={mode === 'rotate'} onClick={() => setMode('rotate')}>
+            <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16">
+              <path d="M13 8A5 5 0 1 1 8 3" />
+              <path d="M8 1l3 2-3 2" />
+            </svg>
+            Rotate
+          </button>
+          <button type="button" aria-pressed={snapEnabled} onClick={toggleSnap}>
+            <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16">
+              <path d="M1 5h14M1 11h14M5 1v14M11 1v14" />
+            </svg>
+            Snap
+          </button>
+          <button type="button" className="danger" onClick={handleDelete} disabled={selectedId === null}>
+            <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16">
+              <path d="M2 4h12M6 4V2h4v2M4 4l1 10h6l1-10" />
+            </svg>
+            Delete
+          </button>
+          <button type="button" onClick={handleSave} disabled={saveDisabled}>
+            <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16">
+              <path d="M2 2h9l3 3v9H2z" />
+              <path d="M5 2v4h5V2M4 14v-5h8v5" />
+            </svg>
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </footer>
+        {error && <p role="alert">{error}</p>}
+        {/* General store error (EditorCanvas geometry / PrintGroupPanel failures), independent of
+            SaveStatus's save-specific message; suppressed while saveState is 'invalid' so the same
+            text is never rendered by both this banner and SaveStatus at once. */}
+        {saveState !== 'invalid' && saveError && <p role="alert">{saveError}</p>}
+      </div>
     </div>
   )
 }

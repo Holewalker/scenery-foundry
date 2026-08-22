@@ -41,6 +41,12 @@ export interface AutosaveScheduler {
   flushNow: () => Promise<void>
   /** Clears the conflict/invalid suspension after the caller reloads the scene from the server. */
   reload: () => void
+  /**
+   * Clears an `invalid` (non-409 4xx) suspension without discarding local edits — unlike
+   * `reload()`, there is no server scene to adopt, so a fresh flush is attempted directly against
+   * whatever the user has since corrected (Codex fix, PR #54). No-op unless currently suspended.
+   */
+  retry: () => void
   /** Resumes after an offline suspension (e.g. on the browser's `online` event). */
   resume: () => void
   /** Tears down all pending timers; call on unmount. */
@@ -279,6 +285,24 @@ export function createAutosaveScheduler(deps: AutosaveDeps): AutosaveScheduler {
     store.setSaveState('saved')
   }
 
+  function retry(): void {
+    if (!suspended) return
+    suspended = false
+    attempt = 0
+    clearAllTimers()
+    // Dismiss the stale invalid-response message the instant the user asks to retry, regardless
+    // of whether the retried save succeeds — a fresh failure (handled below via flush()) sets its
+    // own message; leaving the old one up would otherwise survive a successful retry, since a
+    // clean save never clears `error` (that field is shared with unrelated geometry/print-group
+    // failures elsewhere in the store).
+    store.setSaveError(null)
+    if (store.isDirty()) {
+      void flush()
+    } else {
+      store.setSaveState('saved')
+    }
+  }
+
   function resume(): void {
     if (suspended) return // conflict/invalid need an explicit reload(), not resume()
     attempt = 0
@@ -291,5 +315,5 @@ export function createAutosaveScheduler(deps: AutosaveDeps): AutosaveScheduler {
     clearAllTimers()
   }
 
-  return { notifyEdit, flushNow: flush, reload, resume, stop }
+  return { notifyEdit, flushNow: flush, reload, retry, resume, stop }
 }

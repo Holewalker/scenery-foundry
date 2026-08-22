@@ -140,6 +140,13 @@ main {
   font-size: var(--font-size-lg);
 }
 
+/* Transparent to the `.editor-shell` grid (its children keep matching `panel`/`viewport`/`footer`
+   grid-template-areas as if this wrapper did not exist) while still being a real DOM node that
+   `inert` can be toggled on to lock out the rest of the app while the conflict modal is open. */
+.editor-content {
+  display: contents;
+}
+
 .save-state {
   margin: 0;
   color: var(--color-text-muted);

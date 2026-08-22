@@ -372,4 +372,51 @@ describe('autosave scheduler', () => {
     await vi.advanceTimersByTimeAsync(20000)
     expect(saveScene).toHaveBeenCalledTimes(1) // suspended: no further attempts
   })
+
+  it('retry() clears an invalid suspension, dismisses the stale error, and flushes the corrected scene', async () => {
+    const { store, state, fetchScene } = createFakeStore()
+    const validationError = Object.assign(new Error('bad request'), { status: 422 })
+    const saveScene = vi
+      .fn()
+      .mockRejectedValueOnce(validationError)
+      .mockResolvedValueOnce({ version: 1, objects: [] })
+    const scheduler = createAutosaveScheduler({ projectId: 'p1', store, saveScene, fetchScene })
+
+    edit(state)
+    scheduler.notifyEdit()
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(store.setSaveState).toHaveBeenLastCalledWith('invalid')
+
+    // The user fixes the scene while suspended — still dirty, but no auto-retry happens.
+    edit(state)
+    scheduler.notifyEdit()
+    await vi.advanceTimersByTimeAsync(20000)
+    expect(saveScene).toHaveBeenCalledTimes(1)
+
+    scheduler.retry()
+    expect(store.setSaveError).toHaveBeenLastCalledWith(null) // stale message dismissed immediately
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(saveScene).toHaveBeenCalledTimes(2)
+    expect(store.setSaveState).toHaveBeenLastCalledWith('saved')
+    expect(state.dirty).toBe(false)
+
+    // Suspension fully lifted: ordinary autosave resumes for subsequent edits.
+    edit(state)
+    scheduler.notifyEdit()
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(saveScene).toHaveBeenCalledTimes(3)
+  })
+
+  it('retry() is a no-op when the scheduler is not currently suspended', async () => {
+    const { store, state, fetchScene } = createFakeStore()
+    const saveScene = vi.fn().mockResolvedValue({ version: 1, objects: [] })
+    const scheduler = createAutosaveScheduler({ projectId: 'p1', store, saveScene, fetchScene })
+
+    scheduler.retry()
+    expect(saveScene).not.toHaveBeenCalled()
+    expect(store.setSaveError).not.toHaveBeenCalled()
+    void state
+  })
 })
