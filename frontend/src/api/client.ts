@@ -1,5 +1,31 @@
 import type { AssetSummary, PrintGroupSummary, SceneDto } from '../editor/store'
 
+/**
+ * Thrown by `saveScene` (ADR-0007) so callers — chiefly `autosave.ts` — can branch on the HTTP
+ * status (409 conflict vs. other 4xx vs. network/5xx) and the server's `{code, message}` body
+ * without re-parsing the response themselves.
+ */
+export class ApiError extends Error {
+  readonly status: number
+  readonly code?: string
+
+  constructor(status: number, code?: string, message?: string) {
+    super(message ?? `request failed with status ${status}`)
+    this.name = 'ApiError'
+    this.status = status
+    this.code = code
+  }
+}
+
+async function readErrorCode(response: Response): Promise<string | undefined> {
+  try {
+    const body = (await response.json()) as { code?: string }
+    return body.code
+  } catch {
+    return undefined
+  }
+}
+
 interface CsrfToken {
   token: string
   headerName: string
@@ -83,7 +109,9 @@ export async function saveScene(projectId: string, scene: SceneDto): Promise<Sce
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(scene),
   })
-  if (!response.ok) throw new Error('failed to save scene')
+  if (!response.ok) {
+    throw new ApiError(response.status, await readErrorCode(response))
+  }
   return response.json() as Promise<SceneDto>
 }
 
