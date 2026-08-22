@@ -42,6 +42,8 @@ export interface SceneObjectDto {
   quaternionXyzw: Vec4
   scale: Vec3
   matrixWorldColumnMajor: number[]
+  printGroupId: string | null
+  levelId: string | null
 }
 
 export interface SceneDto {
@@ -54,6 +56,18 @@ export interface EditorObject {
   translationMm: Vec3
   quaternionXyzw: Vec4
   scale: Vec3
+  printGroupId: string | null
+  levelId: string | null
+}
+
+export interface PrintGroupSummary {
+  id: string
+  name: string
+}
+
+export interface LevelSummary {
+  id: string
+  name: string
 }
 
 export type TransformMode = 'translate' | 'rotate'
@@ -85,6 +99,8 @@ function nextObjectId(objects: EditorObject[]): number {
 const INITIAL_STATE = {
   assets: [] as AssetSummary[],
   objects: [] as EditorObject[],
+  printGroups: [] as PrintGroupSummary[],
+  levels: [] as LevelSummary[],
   selectedId: null as number | null,
   mode: 'translate' as TransformMode,
   snapEnabled: false,
@@ -97,6 +113,8 @@ const INITIAL_STATE = {
 export interface EditorState {
   assets: AssetSummary[]
   objects: EditorObject[]
+  printGroups: PrintGroupSummary[]
+  levels: LevelSummary[]
   selectedId: number | null
   mode: TransformMode
   snapEnabled: boolean
@@ -118,6 +136,11 @@ export interface EditorState {
   toSceneDto: () => SceneDto
   setLoading: (loading: boolean) => void
   setError: (error: string | null) => void
+  setPrintGroups: (printGroups: PrintGroupSummary[]) => void
+  setLevels: (levels: LevelSummary[]) => void
+  assignPrintGroup: (id: number, printGroupId: string | null) => void
+  assignLevel: (id: number, levelId: string | null) => void
+  removePrintGroup: (groupId: string) => void
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
@@ -126,7 +149,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   upsertAssets: (assets) => set((state) => ({ assets: upsertAssetList(state.assets, assets) })),
   insert: (assetId) => {
     const id = nextObjectId(get().objects)
-    const created: EditorObject = { id, assetId, translationMm: [0, 0, 0], quaternionXyzw: [0, 0, 0, 1], scale: [1, 1, 1] }
+    const created: EditorObject = {
+      id,
+      assetId,
+      translationMm: [0, 0, 0],
+      quaternionXyzw: [0, 0, 0, 1],
+      scale: [1, 1, 1],
+      printGroupId: null,
+      levelId: null,
+    }
     set((state) => ({ objects: [...state.objects, created], selectedId: id, dirty: true }))
     return id
   },
@@ -168,6 +199,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           translationMm: object.translationMm,
           quaternionXyzw: object.quaternionXyzw,
           scale: object.scale,
+          // Scenes saved before this change carry neither field at all (undefined, not null),
+          // even though SceneObjectDto types them as `string | null` (CodeRabbit finding, PR7
+          // #48) — normalize here so toSceneDto() always round-trips an explicit null instead of
+          // JSON.stringify silently omitting the key on the next save.
+          printGroupId: object.printGroupId ?? null,
+          levelId: object.levelId ?? null,
         })),
       selectedId: null,
       dirty: false,
@@ -183,10 +220,37 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         quaternionXyzw: object.quaternionXyzw,
         scale: object.scale,
         matrixWorldColumnMajor: composeMatrixColumnMajor(object.translationMm, object.quaternionXyzw, object.scale),
+        printGroupId: object.printGroupId,
+        levelId: object.levelId,
       })),
   }),
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
+  setPrintGroups: (printGroups) => set({ printGroups }),
+  setLevels: (levels) => set({ levels }),
+  assignPrintGroup: (id, printGroupId) =>
+    set((state) => ({
+      objects: state.objects.map((object) => (object.id === id ? { ...object, printGroupId } : object)),
+      dirty: true,
+    })),
+  assignLevel: (id, levelId) =>
+    set((state) => ({
+      objects: state.objects.map((object) => (object.id === id ? { ...object, levelId } : object)),
+      dirty: true,
+    })),
+  // Atomically removes the group AND clears every object's now-dangling reference to it
+  // (CodeRabbit/Codex finding on PR7, #48): the backend clears scene_objects.print_group_id on
+  // delete, but local state held a stale UUID that the next scene save would send right back,
+  // violating scene_objects_print_group_project_fkey. One set() call, not two separate ones, so
+  // no intermediate render ever shows the group gone but the assignment still pointing at it.
+  removePrintGroup: (groupId) =>
+    set((state) => ({
+      printGroups: state.printGroups.filter((group) => group.id !== groupId),
+      objects: state.objects.map((object) =>
+        object.printGroupId === groupId ? { ...object, printGroupId: null } : object
+      ),
+      dirty: true,
+    })),
 }))
 
 export function resetEditorStore(): void {

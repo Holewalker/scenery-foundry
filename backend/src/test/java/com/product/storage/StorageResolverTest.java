@@ -96,4 +96,32 @@ class StorageResolverTest {
         assertThatThrownBy(() -> resolver.openInputStream("assets/does-not-exist.stl"))
             .isInstanceOf(StorageAccessException.class);
     }
+
+    @Test
+    void sizeReturnsTheOnDiskByteLengthAndFailsOnAMissingKey(@TempDir Path root) throws IOException {
+        var resolver = new StorageResolver(root);
+        var key = "assets/original.stl";
+        var source = Files.createTempFile(root, "upload", ".tmp");
+        Files.writeString(source, "solid cube");
+        resolver.publish(source, key);
+
+        assertThat(resolver.size(key)).isEqualTo("solid cube".getBytes(StandardCharsets.UTF_8).length);
+        assertThatThrownBy(() -> resolver.size("assets/does-not-exist.stl")).isInstanceOf(StorageAccessException.class);
+    }
+
+    @Test
+    void deleteQuietlyRemovesAnExistingKeyAndSwallowsAMissingOne(@TempDir Path root) throws IOException {
+        var resolver = new StorageResolver(root);
+        var key = "exports/e1/snapshot.json";
+        var source = Files.createTempFile(root, "snapshot", ".tmp");
+        Files.writeString(source, "{}");
+        resolver.publish(source, key);
+        assertThat(resolver.readBytes(key)).isNotEmpty();
+
+        resolver.deleteQuietly(key);
+
+        assertThatThrownBy(() -> resolver.readBytes(key)).isInstanceOf(StorageAccessException.class);
+        resolver.deleteQuietly(key); // already gone; must not throw
+        resolver.deleteQuietly("exports/never-existed/snapshot.json"); // never existed; must not throw
+    }
 }

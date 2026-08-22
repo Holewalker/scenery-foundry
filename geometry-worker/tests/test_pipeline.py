@@ -1,10 +1,12 @@
 import json
 from datetime import UTC, datetime, timedelta
+from unittest.mock import patch
 from uuid import uuid4
 
 import trimesh
 from conftest import insert_job, insert_owner
 
+from scenery_foundry_worker import pipeline
 from scenery_foundry_worker.claim import ClaimedJob, sha256_hex
 from scenery_foundry_worker.pipeline import PipelineResult, finalize_job, process_job
 
@@ -99,6 +101,55 @@ def test_process_job_fails_fast_on_a_checksum_mismatch_before_parsing(tmp_path):
 
     assert result.status == "FAILED"
     assert result.error_code == "CHECKSUM_MISMATCH"
+
+
+def test_process_job_dispatches_asset_processing_jobs_to_process_asset_job(tmp_path):
+    """`process_job` must look up the ASSET_PROCESSING handler in `_HANDLERS` (task 6.1/6.2) rather
+    than running the pipeline body inline, so `process_asset_job` is the real, directly-testable
+    ASSET_PROCESSING entry point."""
+    job = _job_for({"storageKey": "x", "sha256": "y", "sizeBytes": 1})
+    sentinel = PipelineResult("COMPLETED", '{"geometryStatus":"VALID_VOLUME"}')
+
+    with patch.dict(pipeline._HANDLERS, {"ASSET_PROCESSING": lambda j, root: sentinel}):
+        result = process_job(job, tmp_path)
+
+    assert result is sentinel
+
+
+def test_process_job_dispatches_combined_export_jobs_by_job_type(tmp_path):
+    job = _job_for({"storageKey": "x", "sha256": "y", "sizeBytes": 1})
+    job.payload["jobType"] = "COMBINED_EXPORT"
+    sentinel = PipelineResult("COMPLETED", '{"exportStatus":"COMPLETED"}')
+
+    with patch.dict(pipeline._HANDLERS, {"COMBINED_EXPORT": lambda j, root: sentinel}):
+        result = process_job(job, tmp_path)
+
+    assert result is sentinel
+
+
+def test_process_job_fails_fast_for_an_unrecognized_job_type(tmp_path):
+    job = _job_for({"storageKey": "x", "sha256": "y", "sizeBytes": 1})
+    job.payload["jobType"] = "SOMETHING_UNKNOWN"
+
+    result = process_job(job, tmp_path)
+
+    assert result.status == "FAILED"
+    assert result.error_code == "UNSUPPORTED_PAYLOAD_VERSION"
+
+
+def test_process_asset_job_is_directly_callable_as_the_verbatim_extracted_entry_point(tmp_path):
+    """Approval test (Strict TDD): `process_asset_job` is `process_job`'s pre-PR6 body, moved
+    verbatim (task 6.1). Called directly (not through `process_job`'s dispatch) to prove it stands
+    on its own as the real ASSET_PROCESSING entry point."""
+    from scenery_foundry_worker.pipeline import process_asset_job
+
+    stl_bytes = trimesh.creation.box(extents=[5, 5, 5]).export(file_type="stl")
+    sha256 = _write_stl(tmp_path, "assets/verbatim/original.stl", stl_bytes)
+    job = _job_for({"storageKey": "assets/verbatim/original.stl", "sha256": sha256, "sizeBytes": 1})
+
+    result = process_asset_job(job, tmp_path)
+
+    assert result.status == "COMPLETED"
 
 
 def test_finalize_job_writes_completed_row_via_the_conditional_claim_token_update(db_connection):

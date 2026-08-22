@@ -5,6 +5,7 @@ import { fetchAssets, fetchScene, login, saveScene } from './api/client'
 import { AssetCatalog } from './editor/AssetCatalog'
 import { AssetUpload } from './editor/AssetUpload'
 import { EditorCanvas } from './editor/EditorCanvas'
+import { PrintGroupPanel } from './editor/PrintGroupPanel'
 import { useEditorStore } from './editor/store'
 
 function readProjectId(): string | null {
@@ -118,6 +119,7 @@ export function App() {
       <aside className="panel">
         <AssetUpload />
         <AssetCatalog assets={assets} />
+        <PrintGroupPanel projectId={projectId} />
       </aside>
       <section className="viewport">
         <EditorCanvas />

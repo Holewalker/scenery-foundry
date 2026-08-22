@@ -96,6 +96,36 @@ class OwnedSceneServiceTest {
     }
 
     @Test
+    void roundTripsAssignsReassignsAndUnassignsThePrintGroupAndLevelOnASceneObject() {
+        var repository = new InMemoryOwnedSceneRepository();
+        var service = new OwnedSceneService(repository, UNUSED_STORAGE);
+        service.createProject(new Project(projectId, ownerA));
+        repository.saveAsset(new PreparedAsset(assetId, projectId, AssetProcessingStatus.READY,
+            AssetGeometryStatus.VALID_VOLUME, "assets/a.stl", "a".repeat(64)));
+        var groupA = UUID.randomUUID();
+        var groupB = UUID.randomUUID();
+        var level = UUID.randomUUID();
+
+        service.replaceScene(ownerA, projectId, new SceneDtos.SceneDto(List.of(dto(groupA, level))));
+        var assigned = service.loadScene(ownerA, projectId).objects().get(0);
+        assertThat(assigned.printGroupId()).isEqualTo(groupA);
+        assertThat(assigned.levelId()).isEqualTo(level);
+
+        service.replaceScene(ownerA, projectId, new SceneDtos.SceneDto(List.of(dto(groupB, level))));
+        assertThat(service.loadScene(ownerA, projectId).objects().get(0).printGroupId()).isEqualTo(groupB);
+
+        service.replaceScene(ownerA, projectId, new SceneDtos.SceneDto(List.of(dto(null, null))));
+        var unassigned = service.loadScene(ownerA, projectId).objects().get(0);
+        assertThat(unassigned.printGroupId()).isNull();
+        assertThat(unassigned.levelId()).isNull();
+    }
+
+    private SceneDtos.SceneObjectDto dto(UUID printGroupId, UUID levelId) {
+        return new SceneDtos.SceneObjectDto(1, assetId, 1,
+            new double[] {0, 0, 0}, new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}, identity(), printGroupId, levelId);
+    }
+
+    @Test
     void hidesOtherOwnersReadyAssetsFromReplaceSceneEvenWhenTheDoubleSharesOneRepositoryInstance() {
         var repository = new InMemoryOwnedSceneRepository();
         var service = new OwnedSceneService(repository, UNUSED_STORAGE);

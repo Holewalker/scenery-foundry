@@ -45,21 +45,23 @@ public class JdbcOwnedSceneRepository implements OwnedSceneRepository {
             .param("owner", ownerId).query(UUID.class).list());
     }
     @Override public List<SceneObject> findSceneObjects(UUID projectId) {
-        return jdbc.sql("select id,asset_id,quaternion_xyzw,scale,matrix_world_column_major from scene_objects where project_id=:project order by id")
+        return jdbc.sql("select id,asset_id,quaternion_xyzw,scale,matrix_world_column_major,print_group_id,level_id from scene_objects where project_id=:project order by id")
             .param("project", projectId).query((row, index) -> mapSceneObject(projectId, row)).list();
     }
+    /** Must persist print_group_id/level_id here (D6): this delete-then-reinsert is the SINGLE writer of
+     * scene_objects, so a side-endpoint would be silently wiped on the next scene save. */
     @Override @Transactional(isolation = Isolation.READ_COMMITTED)
     public void replaceScene(UUID projectId, List<SceneObject> objects) {
         jdbc.sql("delete from scene_objects where project_id=:project").param("project", projectId).update();
         for (SceneObject object : objects) {
             var transform = object.transform();
             double[] matrix = transform.matrixWorldColumnMajor();
-            jdbc.sql("insert into scene_objects(id,project_id,owner_id,asset_id,matrix_contract_version,translation_mm,quaternion_xyzw,scale,matrix_world_column_major) "
-                    + "values (:id,:project,(select owner_id from projects where id=:project),:asset,1,:translation::double precision[],:quaternion::double precision[],:scale::double precision[],:matrix::double precision[])")
+            jdbc.sql("insert into scene_objects(id,project_id,owner_id,asset_id,matrix_contract_version,translation_mm,quaternion_xyzw,scale,matrix_world_column_major,print_group_id,level_id) "
+                    + "values (:id,:project,(select owner_id from projects where id=:project),:asset,1,:translation::double precision[],:quaternion::double precision[],:scale::double precision[],:matrix::double precision[],:group,:level)")
                 .param("id", object.id().value()).param("project", projectId).param("asset", object.assetId())
                 .param("translation", arrayLiteral(new double[] {matrix[12], matrix[13], matrix[14]}))
                 .param("quaternion", arrayLiteral(transform.quaternionXyzw())).param("scale", arrayLiteral(transform.scale()))
-                .param("matrix", arrayLiteral(matrix)).update();
+                .param("matrix", arrayLiteral(matrix)).param("group", object.printGroupId()).param("level", object.levelId()).update();
         }
     }
 
@@ -72,7 +74,8 @@ public class JdbcOwnedSceneRepository implements OwnedSceneRepository {
     private static SceneObject mapSceneObject(UUID projectId, ResultSet row) throws SQLException {
         var transform = SceneTransform.of(toDoubleArray(row.getArray("matrix_world_column_major")),
             toDoubleArray(row.getArray("quaternion_xyzw")), toDoubleArray(row.getArray("scale")));
-        return new SceneObject(SceneObjectId.of(row.getLong("id")), projectId, row.getObject("asset_id", UUID.class), transform);
+        return new SceneObject(SceneObjectId.of(row.getLong("id")), projectId, row.getObject("asset_id", UUID.class), transform,
+            row.getObject("print_group_id", UUID.class), row.getObject("level_id", UUID.class));
     }
 
     private static double[] toDoubleArray(Array sqlArray) throws SQLException {

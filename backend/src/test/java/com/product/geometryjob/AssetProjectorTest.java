@@ -83,6 +83,38 @@ class AssetProjectorTest {
     }
 
     /**
+     * Regression for P1 (Print Preparation Phase 4): {@link AssetProjector} must scope its selection to
+     * {@code job_type = 'ASSET_PROCESSING'} so a terminal {@code COMBINED_EXPORT} row is never selected or
+     * stamped {@code projected_at} by this projector. As of the V6 migration (PR2) the real {@code job_type}
+     * CHECK already admits {@code COMBINED_EXPORT}, so this test inserts a real row directly against the
+     * production schema — no test-local CHECK widening is needed anymore (removed per PR2 task 2.3; the
+     * widen/restore helpers this test used before V6 landed are now dead code superseded by the real
+     * migration).
+     */
+    @Test
+    void projectsOnlyAssetProcessingJobsAndIgnoresCombinedExportJobs() {
+        var owner = insertUser();
+        var assetId = insertAsset(owner);
+        var assetJobId = insertTerminalJob(owner, assetId, "COMPLETED", "assets/" + assetId + "/preview.glb",
+            "sha-1", "{\"geometryStatus\":\"VALID_VOLUME\"}", null);
+        var exportJobId = insertTerminalCombinedExportJob(owner);
+
+        var projected = projector.project();
+
+        assertThat(projected).isEqualTo(1);
+        assertThat(isProjected(assetJobId)).isTrue();
+        assertThat(isProjected(exportJobId)).isFalse();
+    }
+
+    private UUID insertTerminalCombinedExportJob(UUID owner) {
+        var id = UUID.randomUUID();
+        jdbc.sql("insert into geometry_jobs(id,owner_id,job_type,subject_id,status,completed_at,payload,idempotency_key) "
+                + "values (:id,:owner,'COMBINED_EXPORT',:subject,'COMPLETED',clock_timestamp(),'{}'::jsonb,:key)")
+            .param("id", id).param("owner", owner).param("subject", UUID.randomUUID()).param("key", "idem-" + id).update();
+        return id;
+    }
+
+    /**
      * Test-only trigger that raises whenever {@code geometry_jobs.projected_at} is updated on a row whose
      * {@code error_code} is the sentinel {@code FORCE_ROLLBACK_TEST}. Fires only on the projector's SECOND
      * statement (the first statement never touches {@code geometry_jobs}), proving the two writes share one

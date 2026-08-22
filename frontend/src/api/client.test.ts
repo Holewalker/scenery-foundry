@@ -1,5 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { fetchAssetPreview, fetchAssets, fetchScene, login, resetCsrfCache, saveScene, uploadAsset } from './client'
+import {
+  captureCombinedExport,
+  createPrintGroup,
+  deletePrintGroup,
+  fetchAssetPreview,
+  fetchAssets,
+  fetchCombinedExportStatus,
+  fetchPrintGroups,
+  fetchScene,
+  login,
+  resetCsrfCache,
+  saveScene,
+  uploadAsset,
+} from './client'
 
 const originalFetch = globalThis.fetch
 
@@ -132,6 +145,50 @@ describe('api client', () => {
     fetchMock.mockResolvedValueOnce({ ok: false, status: 404 } as Response)
 
     await expect(fetchScene('project-missing')).rejects.toThrow('failed to fetch scene')
+  })
+
+  // apiFetch's shared csrf/same-origin plumbing is already proven generically above; these new
+  // endpoint tests focus on url/method/payload shape instead of re-litigating it per endpoint.
+  it('print-group + combined-export endpoints resolve on success and throw on failure', async () => {
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
+    const csrf = jsonResponse({ token: 't', headerName: 'X-CSRF-TOKEN' })
+
+    fetchMock.mockResolvedValueOnce(jsonResponse([{ id: 'group-1', name: 'Group 1' }]))
+    expect(await fetchPrintGroups('project-1')).toEqual([{ id: 'group-1', name: 'Group 1' }])
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/projects/project-1/print-groups')
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 404 } as Response)
+    await expect(fetchPrintGroups('project-1')).rejects.toThrow('failed to fetch print groups')
+
+    fetchMock.mockResolvedValueOnce(csrf).mockResolvedValueOnce(jsonResponse({ id: 'group-1', name: 'Group 1' }))
+    expect(await createPrintGroup('project-1', 'Group 1')).toEqual({ id: 'group-1', name: 'Group 1' })
+    const [createUrl, createInit] = fetchMock.mock.calls[3] as [string, RequestInit]
+    expect(createUrl).toBe('/api/projects/project-1/print-groups')
+    expect(createInit.method).toBe('POST')
+    expect(JSON.parse(createInit.body as string)).toEqual({ name: 'Group 1' })
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 422 } as Response)
+    await expect(createPrintGroup('project-1', 'Group 1')).rejects.toThrow('failed to create print group')
+
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 204 } as Response)
+    await expect(deletePrintGroup('group-1')).resolves.toBeUndefined()
+    const [deleteUrl, deleteInit] = fetchMock.mock.calls[5] as [string, RequestInit]
+    expect(deleteUrl).toBe('/api/print-groups/group-1')
+    expect(deleteInit.method).toBe('DELETE')
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 404 } as Response)
+    await expect(deletePrintGroup('group-foreign')).rejects.toThrow('failed to delete print group')
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ exportId: 'export-1' }))
+    expect(await captureCombinedExport('group-1')).toEqual({ exportId: 'export-1' })
+    const [captureUrl, captureInit] = fetchMock.mock.calls[7] as [string, RequestInit]
+    expect(captureUrl).toBe('/api/print-groups/group-1/combined-exports')
+    expect(captureInit.method).toBe('POST')
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 422 } as Response)
+    await expect(captureCombinedExport('group-1')).rejects.toThrow('failed to capture combined export')
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ status: 'RUNNING' }))
+    expect(await fetchCombinedExportStatus('export-1')).toEqual({ status: 'RUNNING' })
+    expect(fetchMock.mock.calls[9]?.[0]).toBe('/api/combined-exports/export-1/status')
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 404 } as Response)
+    await expect(fetchCombinedExportStatus('export-foreign')).rejects.toThrow('failed to fetch combined export status')
   })
 
   it('retries the csrf fetch on a later mutating request after an earlier csrf fetch failure', async () => {
