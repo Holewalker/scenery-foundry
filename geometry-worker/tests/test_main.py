@@ -1,3 +1,4 @@
+import io
 import json
 from unittest.mock import patch
 from uuid import uuid4
@@ -7,6 +8,7 @@ import trimesh
 from conftest import insert_combined_export_job, insert_job, insert_owner
 
 from scenery_foundry_worker.claim import sha256_hex
+from scenery_foundry_worker.logging_setup import configure_logging
 from scenery_foundry_worker.main import main, run_once
 
 
@@ -211,3 +213,75 @@ def test_claim_next_rotates_the_try_order_by_poll_index():
         _claim_next(None, "worker-test", 120, poll_index=1)
 
     assert tried == [*JOB_TYPES, *reversed(JOB_TYPES)]
+
+
+def test_run_once_logs_a_single_structured_json_line_when_process_job_raises_no_raw_traceback_dump(
+    db_connection, tmp_path
+):
+    """Task 3.5: `traceback.print_exc()` is replaced by structured logging (design's platform-
+    observability spec: "no raw stdout traceback dump", job_id/asset_id/error detail present)."""
+    owner_id = insert_owner(db_connection)
+    subject_id = uuid4()
+    job_id = insert_job(db_connection, owner_id, subject_id=subject_id)
+    stream = io.StringIO()
+    configure_logging(stream=stream)
+
+    with patch("scenery_foundry_worker.main.process_job", side_effect=RuntimeError("boom")):
+        handled = run_once(db_connection, tmp_path, worker_id="worker-test")
+
+    assert handled is True
+    lines = [line for line in stream.getvalue().splitlines() if line.strip()]
+    assert len(lines) == 1, f"expected exactly one structured JSON line, got: {lines!r}"
+    payload = json.loads(lines[0])  # would raise if it were a raw multi-line traceback dump
+    assert payload["jobId"] == str(job_id)
+    assert payload["jobType"] == "ASSET_PROCESSING"
+    assert payload["subjectId"] == str(subject_id)
+    assert payload["workerId"] == "worker-test"
+    assert payload["error.type"] == "RuntimeError"
+    assert payload["error.message"] == "boom"
+    assert "Traceback" in payload["error.stackTrace"]
+
+
+def test_poll_cycle_touches_the_liveness_marker_whether_or_not_a_job_was_claimed(tmp_path):
+    """Task 3.5: the liveness marker is touched every poll cycle (D9), not only when a job is
+    claimed — an idle worker must still be reported healthy."""
+    from scenery_foundry_worker.main import _poll_cycle
+
+    marker = tmp_path / "liveness"
+    with patch("scenery_foundry_worker.main.liveness_marker_path", return_value=marker):
+        with patch("scenery_foundry_worker.main.run_once", return_value=False) as mock_run_once:
+            handled = _poll_cycle(
+                conn=None, data_root=tmp_path, worker_id="w", lease_seconds=120, poll_index=0
+            )
+
+    assert handled is False
+    assert marker.exists()
+    mock_run_once.assert_called_once_with(None, tmp_path, "w", 120, 0)
+
+
+def test_main_configures_structured_logging_and_emits_a_startup_line(monkeypatch, tmp_path):
+    """Task 3.5: `main()` installs the JSON formatter and announces startup structurally instead
+    of the old raw `print(worker_identity(), flush=True)`."""
+    monkeypatch.setenv("WORKER_DATABASE_URL", "postgresql://unused/unused")
+    monkeypatch.setenv("WORKER_LIVENESS_PATH", str(tmp_path / "liveness"))
+    stream = io.StringIO()
+
+    class _ImmediatelyStoppedEvent:
+        def is_set(self):
+            return True
+
+        def wait(self, _seconds):
+            return None
+
+    fake_event = _ImmediatelyStoppedEvent()
+    with patch("scenery_foundry_worker.main.threading.Event", return_value=fake_event):
+        with patch("scenery_foundry_worker.main.psycopg.connect") as mock_connect:
+            mock_connect.return_value.__enter__.return_value = object()
+            with patch("scenery_foundry_worker.logging_setup.sys.stdout", stream):
+                main()
+
+    lines = [line for line in stream.getvalue().splitlines() if line.strip()]
+    assert len(lines) >= 1
+    payload = json.loads(lines[0])
+    assert payload["level"] == "INFO"
+    assert payload["service.name"] == "scenery-foundry.geometry-worker"

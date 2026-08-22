@@ -1,5 +1,13 @@
 name: scenery-foundry
 
+# ADR-0008: caps every service's json-file log driver so logs cannot grow unbounded and fill the
+# VPS disk. ~10MiB x 5 files per service (~50MiB), matching ADR-0008's resource table.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   postgres:
     image: postgres:18.4
@@ -14,6 +22,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    logging: *default-logging
     restart: unless-stopped
 
   backend:
@@ -39,6 +48,7 @@ services:
       interval: 10s
       timeout: 3s
       retries: 10
+    logging: *default-logging
     restart: unless-stopped
 
   geometry-worker:
@@ -56,10 +66,14 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "from scenery_foundry_worker.main import worker_identity; assert worker_identity()"]
+      # Real healthcheck (ADR-0008 D9): liveness-marker freshness (touched every poll cycle,
+      # claimed or not) + an independent DB probe. Replaces the previous import-only stub, which
+      # would report healthy even if the poll loop had wedged or the DB connection had died.
+      test: ["CMD", "python", "-m", "scenery_foundry_worker.healthcheck"]
       interval: 10s
       timeout: 3s
       retries: 5
+    logging: *default-logging
     restart: unless-stopped
 
   frontend:
@@ -75,6 +89,7 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+    logging: *default-logging
     restart: unless-stopped
 
 volumes:
