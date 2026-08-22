@@ -77,6 +77,13 @@ docker info >/dev/null 2>&1 || {
   exit 1
 }
 
+# ADR-0008 / Phase 4 (backups): shell-level RED tests for injection safety, atomicity, and
+# retention pruning, each against a real throwaway postgres:18.4 container (project convention:
+# no DB mocks). Independent of the toolchain/build steps below, so they run first.
+for backup_test in "$repo"/scripts/backup/tests/test-*.sh; do
+  bash "$backup_test"
+done
+
 rm -rf "$repo/backend/target" "$repo/frontend/dist" "$repo/frontend/.vite" \
   "$repo/geometry-worker/.pytest_cache" "$repo/geometry-worker/.ruff_cache"
 
@@ -105,4 +112,11 @@ done
 ( cd "$repo/geometry-worker" && uv sync --locked && uv run ruff check . && uv run ruff format --check . && uv run pytest -q; )
 
 ( cd "$repo" && docker compose --project-name "$project" build && docker compose --project-name "$project" up --wait; )
-echo "Full verification passed: toolchains, tests, PostgreSQL boundary, images, and stack health."
+
+# Task 4.9: on-demand backup + real restore-smoke.sh drill against the live stack's own
+# postgres/backup services, not a synthetic harness — proves the actual shipped scripts work
+# end-to-end, not just in isolation.
+( cd "$repo" && docker compose --project-name "$project" exec -T backup bash /scripts/backup/backup.sh; )
+( cd "$repo" && docker compose --project-name "$project" exec -T backup bash /scripts/backup/restore-smoke.sh; )
+
+echo "Full verification passed: toolchains, tests, PostgreSQL boundary, images, stack health, and a real backup+restore drill."
