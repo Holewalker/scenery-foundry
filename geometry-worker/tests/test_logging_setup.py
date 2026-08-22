@@ -135,6 +135,29 @@ def test_exception_logging_includes_structured_error_fields():
     assert payload["jobId"] == "job-1"
 
 
+def test_redacts_absolute_paths_inside_the_formatted_exception_stack_trace():
+    """P1 Codex finding on PR #55: `formatException()`'s output embeds raw source filenames and
+    repeats the unredacted exception text, so a `FileNotFoundError` naming an absolute path
+    outside `/data` must not leak that path via `error.stackTrace` even though `error.message`
+    is separately redacted."""
+    stream = io.StringIO()
+    configure_logging(stream=stream)
+    logger = logging.getLogger("scenery_foundry_worker.test")
+    secret_path = "/etc/secrets/worker-db-password"
+
+    try:
+        raise FileNotFoundError(secret_path)
+    except FileNotFoundError:
+        bind(logger, jobId="job-1").exception("job_processing_failed")
+
+    lines = [line for line in stream.getvalue().splitlines() if line.strip()]
+    assert len(lines) == 1
+    payload = json.loads(lines[0])
+    assert secret_path not in payload["error.stackTrace"]
+    assert secret_path not in payload["error.message"]
+    assert "[REDACTED]" in payload["error.stackTrace"]
+
+
 def test_configure_logging_is_idempotent_and_does_not_duplicate_handlers():
     stream = io.StringIO()
     configure_logging(stream=stream)

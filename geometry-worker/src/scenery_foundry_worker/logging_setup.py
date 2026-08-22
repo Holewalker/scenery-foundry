@@ -124,7 +124,13 @@ class JsonFormatter(logging.Formatter):
             error_type, error_value, _traceback = record.exc_info
             payload["error.type"] = error_type.__name__ if error_type else None
             payload["error.message"] = _redact_absolute_paths(str(error_value))
-            payload["error.stackTrace"] = self.formatException(record.exc_info)
+            # `formatException` embeds raw source filenames (e.g. this repo's own checkout path)
+            # AND repeats the exception's unredacted `str(value)` on its last line (e.g. a
+            # `FileNotFoundError` naming an absolute path outside `/data`). Reuse the exact same
+            # redaction applied to `error.message` above rather than inventing a second, divergent
+            # redaction path for this string.
+            formatted_trace = self.formatException(record.exc_info)
+            payload["error.stackTrace"] = _redact_absolute_paths(formatted_trace)
         return json.dumps(payload, default=str)
 
 

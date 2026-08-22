@@ -35,6 +35,38 @@ def test_fails_when_marker_is_stale_even_though_db_is_reachable(tmp_path, postgr
     assert check_health(path=marker, database_url=postgres_dsn, max_age_seconds=30.0) is False
 
 
+def test_passes_when_marker_is_stale_beyond_old_threshold_but_within_the_configured_lease(
+    tmp_path, postgres_dsn, monkeypatch
+):
+    """P2 Codex finding on PR #55: a long STL/combined-export job exceeding the previous fixed
+    30s freshness threshold must not report the worker unhealthy during genuinely normal
+    operation. The default threshold now covers the configured job lease -- this codebase's own
+    definition of the longest a single job may run (`pipeline.py`'s finalize fences on
+    `lease_expires_at > clock_timestamp()`) -- not an arbitrary poll-interval multiple."""
+    monkeypatch.setenv("WORKER_LEASE_SECONDS", "120")
+    marker = tmp_path / "liveness"
+    touch_liveness_marker(marker)
+    stale_time = time.time() - 100  # older than the old 30s threshold, well within a 120s lease
+    os.utime(marker, (stale_time, stale_time))
+
+    assert check_health(path=marker, database_url=postgres_dsn) is True
+
+
+def test_fails_when_marker_is_stale_beyond_the_configured_lease_plus_buffer(
+    tmp_path, postgres_dsn, monkeypatch
+):
+    """A genuinely stuck/crashed worker (no touches at all) must still trip unhealthy in bounded
+    time even with the widened default threshold -- widening must not make the healthcheck
+    useless for detecting a truly dead worker."""
+    monkeypatch.setenv("WORKER_LEASE_SECONDS", "1")
+    marker = tmp_path / "liveness"
+    touch_liveness_marker(marker)
+    stale_time = time.time() - 3600  # 1 hour old, far beyond a 1s lease + any reasonable buffer
+    os.utime(marker, (stale_time, stale_time))
+
+    assert check_health(path=marker, database_url=postgres_dsn) is False
+
+
 def test_fails_when_marker_is_missing(tmp_path, postgres_dsn):
     marker = tmp_path / "does-not-exist"
 

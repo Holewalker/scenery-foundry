@@ -259,6 +259,38 @@ def test_poll_cycle_touches_the_liveness_marker_whether_or_not_a_job_was_claimed
     mock_run_once.assert_called_once_with(None, tmp_path, "w", 120, 0)
 
 
+def test_poll_cycle_touches_the_liveness_marker_again_after_a_long_running_job_completes(
+    tmp_path,
+):
+    """P2 Codex finding on PR #55: the liveness marker was only touched BEFORE `run_once()`, not
+    again after -- a large STL/combined-export job exceeding the freshness threshold would report
+    the worker unhealthy while genuinely working normally. `_poll_cycle` must refresh the marker
+    again once `run_once` returns, regardless of how long it took, so a slow-but-alive job never
+    looks stale mid-flight."""
+    import os
+    import time
+
+    from scenery_foundry_worker.main import _poll_cycle
+
+    marker = tmp_path / "liveness"
+
+    def _slow_run_once(*_args, **_kwargs):
+        # Simulates a long job by rewinding the marker's mtime as if the pre-job touch happened
+        # long ago, without an actual multi-second sleep in the test.
+        stale_time = time.time() - 3600
+        os.utime(marker, (stale_time, stale_time))
+        return False
+
+    with patch("scenery_foundry_worker.main.liveness_marker_path", return_value=marker):
+        with patch("scenery_foundry_worker.main.run_once", side_effect=_slow_run_once):
+            _poll_cycle(
+                conn=None, data_root=tmp_path, worker_id="w", lease_seconds=120, poll_index=0
+            )
+
+    age = time.time() - marker.stat().st_mtime
+    assert age < 5, "marker must be touched again after run_once() returns, not left stale"
+
+
 def test_main_configures_structured_logging_and_emits_a_startup_line(monkeypatch, tmp_path):
     """Task 3.5: `main()` installs the JSON formatter and announces startup structurally instead
     of the old raw `print(worker_identity(), flush=True)`."""

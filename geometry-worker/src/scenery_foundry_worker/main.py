@@ -89,9 +89,18 @@ def _poll_cycle(
 ) -> bool:
     """One iteration of `main()`'s loop: touches the liveness marker (D9 — every cycle, whether
     or not a job was claimed, so an idle worker is still reported healthy), then delegates to
-    `run_once`."""
-    touch_liveness_marker(liveness_marker_path())
-    return run_once(conn, data_root, worker_id, lease_seconds, poll_index)
+    `run_once`, then touches the marker again once `run_once` returns.
+
+    The second touch matters for long jobs: `run_once` can process a large STL or combined-export
+    job for as long as its lease allows, and the marker must not look stale purely because
+    processing (not the poll loop) is what took time. `healthcheck.py`'s freshness threshold is
+    separately widened to tolerate a job in flight; this second touch additionally keeps the
+    marker fresh the moment a job finishes, minimizing detection latency for the next crash."""
+    marker_path = liveness_marker_path()
+    touch_liveness_marker(marker_path)
+    handled = run_once(conn, data_root, worker_id, lease_seconds, poll_index)
+    touch_liveness_marker(marker_path)
+    return handled
 
 
 def main() -> None:
