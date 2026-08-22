@@ -200,4 +200,75 @@ class OwnedSceneServiceTest {
         matrix[index] = value;
         return matrix;
     }
+
+    @Test
+    void versionMatchedSaveSucceedsAndReturnsIncrementedVersion() {
+        var repository = new InMemoryOwnedSceneRepository();
+        var service = new OwnedSceneService(repository, UNUSED_STORAGE);
+        service.createProject(new Project(projectId, ownerA));
+        repository.markAssetReady(ownerA, assetId);
+        var object = new SceneDtos.SceneObjectDto(1, assetId, 1, new double[] {0, 0, 0}, new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}, identity());
+
+        var saved = service.replaceScene(ownerA, projectId, new SceneDtos.SceneDto(0L, List.of(object)));
+        assertThat(saved.version()).isEqualTo(1L);
+        assertThat(service.loadScene(ownerA, projectId).version()).isEqualTo(1L);
+
+        var secondObject = new SceneDtos.SceneObjectDto(2, assetId, 1, new double[] {0, 0, 0}, new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}, identity());
+        var savedAgain = service.replaceScene(ownerA, projectId, new SceneDtos.SceneDto(1L, List.of(secondObject)));
+        assertThat(savedAgain.version()).isEqualTo(2L);
+    }
+
+    @Test
+    void staleVersionSaveIsRejectedWithConflictAndLeavesDataUnchanged() {
+        var repository = new InMemoryOwnedSceneRepository();
+        var service = new OwnedSceneService(repository, UNUSED_STORAGE);
+        service.createProject(new Project(projectId, ownerA));
+        repository.markAssetReady(ownerA, assetId);
+        var object = new SceneDtos.SceneObjectDto(1, assetId, 1, new double[] {0, 0, 0}, new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}, identity());
+        service.replaceScene(ownerA, projectId, new SceneDtos.SceneDto(0L, List.of(object))); // scene_version is now 1
+
+        var staleAttempt = new SceneDtos.SceneObjectDto(2, assetId, 1, new double[] {0, 0, 0}, new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}, identity());
+        assertThatThrownBy(() -> service.replaceScene(ownerA, projectId, new SceneDtos.SceneDto(0L, List.of(staleAttempt))))
+            .isInstanceOf(SceneVersionConflictException.class);
+
+        var loaded = service.loadScene(ownerA, projectId);
+        assertThat(loaded.version()).isEqualTo(1L);
+        assertThat(loaded.objects()).extracting(SceneDtos.SceneObjectDto::id).containsExactly(1L);
+    }
+
+    @Test
+    void missingVersionSucceedsUncheckedWhenRequireVersionIsFalse() {
+        var repository = new InMemoryOwnedSceneRepository();
+        var service = new OwnedSceneService(repository, UNUSED_STORAGE);
+        service.createProject(new Project(projectId, ownerA));
+        repository.markAssetReady(ownerA, assetId);
+        var object = new SceneDtos.SceneObjectDto(1, assetId, 1, new double[] {0, 0, 0}, new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}, identity());
+
+        var saved = service.replaceScene(ownerA, projectId, new SceneDtos.SceneDto(List.of(object)));
+        assertThat(saved.version()).isEqualTo(1L);
+    }
+
+    @Test
+    void missingVersionFailsWithInvalidSceneExceptionWhenRequireVersionIsTrue() {
+        var repository = new InMemoryOwnedSceneRepository();
+        var service = new OwnedSceneService(repository, UNUSED_STORAGE, new SceneProperties(true));
+        service.createProject(new Project(projectId, ownerA));
+        repository.markAssetReady(ownerA, assetId);
+        var object = new SceneDtos.SceneObjectDto(1, assetId, 1, new double[] {0, 0, 0}, new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}, identity());
+
+        assertThatThrownBy(() -> service.replaceScene(ownerA, projectId, new SceneDtos.SceneDto(List.of(object))))
+            .isInstanceOf(InvalidSceneException.class);
+    }
+
+    @Test
+    void ownershipCheckPrecedesVersionConflictForAForeignProject() {
+        var repository = new InMemoryOwnedSceneRepository();
+        var service = new OwnedSceneService(repository, UNUSED_STORAGE);
+        service.createProject(new Project(projectId, ownerA));
+        var object = new SceneDtos.SceneObjectDto(1, assetId, 1, new double[] {0, 0, 0}, new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}, identity());
+
+        // ownerB does not own projectId; an absurdly wrong version must still surface 404, never 409 (ADR-0003).
+        assertThatThrownBy(() -> service.replaceScene(ownerB, projectId, new SceneDtos.SceneDto(999L, List.of(object))))
+            .isInstanceOf(OwnedResourceNotFoundException.class);
+    }
 }

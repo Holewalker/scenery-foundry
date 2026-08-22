@@ -13,6 +13,7 @@ import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import com.product.asset.AssetTooLargeException;
 import com.product.asset.IdempotencyConflictException;
 import com.product.asset.UnsupportedAssetMediaTypeException;
+import com.product.scene.SceneVersionConflictException;
 
 /**
  * Maps exceptions that would otherwise surface as an opaque 500 onto the API's stable
@@ -40,6 +41,11 @@ public class ApiExceptionHandler {
     @ExceptionHandler(IdempotencyConflictException.class)
     ResponseEntity<Map<String, String>> handleIdempotencyConflict(IdempotencyConflictException exception) {
         return body(HttpStatus.CONFLICT, "IDEMPOTENCY_CONFLICT", exception.getMessage());
+    }
+
+    @ExceptionHandler(SceneVersionConflictException.class)
+    ResponseEntity<Map<String, String>> handleSceneVersionConflict(SceneVersionConflictException exception) {
+        return body(HttpStatus.CONFLICT, "SCENE_VERSION_CONFLICT", exception.getMessage());
     }
 
     private static final Set<String> MEMBERSHIP_FOREIGN_KEYS = Set.of(
