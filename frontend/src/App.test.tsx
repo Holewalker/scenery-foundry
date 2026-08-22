@@ -14,22 +14,27 @@ const deletePrintGroupMock = vi.fn()
 const captureCombinedExportMock = vi.fn()
 const fetchCombinedExportStatusMock = vi.fn()
 const confirmMock = vi.spyOn(window, 'confirm')
-vi.mock('./api/client', () => ({
-  login: (...args: unknown[]) => loginMock(...args),
-  fetchAssets: (...args: unknown[]) => fetchAssetsMock(...args),
-  fetchScene: (...args: unknown[]) => fetchSceneMock(...args),
-  saveScene: (...args: unknown[]) => saveSceneMock(...args),
-  uploadAsset: (...args: unknown[]) => uploadAssetMock(...args),
-  fetchPrintGroups: (...args: unknown[]) => fetchPrintGroupsMock(...args),
-  createPrintGroup: (...args: unknown[]) => createPrintGroupMock(...args),
-  deletePrintGroup: (...args: unknown[]) => deletePrintGroupMock(...args),
-  captureCombinedExport: (...args: unknown[]) => captureCombinedExportMock(...args),
-  fetchCombinedExportStatus: (...args: unknown[]) => fetchCombinedExportStatusMock(...args),
-}))
+vi.mock('./api/client', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./api/client')>()
+  return {
+    ...actual, // keeps the real `ApiError` class usable for constructing rejections in tests
+    login: (...args: unknown[]) => loginMock(...args),
+    fetchAssets: (...args: unknown[]) => fetchAssetsMock(...args),
+    fetchScene: (...args: unknown[]) => fetchSceneMock(...args),
+    saveScene: (...args: unknown[]) => saveSceneMock(...args),
+    uploadAsset: (...args: unknown[]) => uploadAssetMock(...args),
+    fetchPrintGroups: (...args: unknown[]) => fetchPrintGroupsMock(...args),
+    createPrintGroup: (...args: unknown[]) => createPrintGroupMock(...args),
+    deletePrintGroup: (...args: unknown[]) => deletePrintGroupMock(...args),
+    captureCombinedExport: (...args: unknown[]) => captureCombinedExportMock(...args),
+    fetchCombinedExportStatus: (...args: unknown[]) => fetchCombinedExportStatusMock(...args),
+  }
+})
 vi.mock('./editor/EditorCanvas', () => ({
   EditorCanvas: () => <div data-testid="editor-canvas" />,
 }))
 
+import { ApiError } from './api/client'
 import { App } from './App'
 
 async function signIn() {
@@ -101,10 +106,13 @@ describe('App', () => {
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Invalid email or password.'))
   })
 
-  it('saves the current scene and reloads it, guarding against duplicate concurrent submissions', async () => {
-    let resolveSave: (value: { objects: [] }) => void = () => {}
+  it('saves a dirty scene via a manual Save and reloads it, guarding against duplicate concurrent submissions', async () => {
+    let resolveSave: (value: { version: number; objects: [] }) => void = () => {}
     saveSceneMock.mockReturnValue(new Promise((resolve) => { resolveSave = resolve }))
     await signIn()
+    act(() => {
+      useEditorStore.getState().insert('asset-a')
+    })
 
     const saveButton = screen.getByRole('button', { name: 'Save' })
     fireEvent.click(saveButton)
@@ -114,19 +122,191 @@ describe('App', () => {
     expect(saveButton).toBeDisabled()
     expect(screen.getByRole('status')).toHaveTextContent('Saving…')
 
-    resolveSave({ objects: [] })
+    resolveSave({ version: 1, objects: [] })
     await waitFor(() => expect(saveButton).not.toBeDisabled())
     expect(screen.getByRole('status')).toHaveTextContent('Saved')
+    expect(useEditorStore.getState().sceneVersion).toBe(1)
   })
 
-  it('shows an error message when saving the scene fails', async () => {
-    saveSceneMock.mockRejectedValue(new Error('save failed'))
+  // Network/5xx failures must not surface as an immediate hard failure (ADR-0007 / spec
+  // "Error-Class-Differentiated Save Handling"): they enter a bounded-retry Retrying state.
+  it('shows a Retrying state, not an immediate failure message, when a manual save fails due to a network error', async () => {
+    saveSceneMock.mockRejectedValue(new Error('network error'))
     await signIn()
+    act(() => {
+      useEditorStore.getState().insert('asset-a')
+    })
 
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
-    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Failed to save the scene.'))
-    expect(screen.getByRole('status')).toHaveTextContent('Save failed')
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Retrying'))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('surfaces a validation error message and stops further autosave attempts on a non-409 4xx save response', async () => {
+    saveSceneMock.mockRejectedValue(new ApiError(422, 'INVALID_SCENE', 'too many objects'))
+    await signIn()
+    act(() => {
+      useEditorStore.getState().insert('asset-a')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Save failed'))
+    expect(screen.getByRole('alert')).toHaveTextContent(/could not be saved/i)
+  })
+
+  // Codex fix (PR #54, finding 1): a user who fixes an invalid scene must be able to persist it
+  // without a full page refresh — Retry clears the suspension and flushes the corrected edits.
+  it('lets the user retry and persist a scene after fixing a validation failure', async () => {
+    saveSceneMock.mockRejectedValueOnce(new ApiError(422, 'INVALID_SCENE', 'too many objects'))
+    await signIn()
+    act(() => {
+      useEditorStore.getState().insert('asset-a')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Save failed'))
+    expect(screen.getByRole('alert')).toHaveTextContent(/could not be saved/i)
+
+    // Manual Save is still a no-op while suspended: only Retry lifts the suspension.
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(saveSceneMock).toHaveBeenCalledTimes(1)
+
+    // The user "fixes" the scene (a further local edit), then retries.
+    act(() => {
+      useEditorStore.getState().insert('asset-b')
+    })
+    saveSceneMock.mockResolvedValueOnce({ version: 1, objects: [] })
+    fireEvent.click(screen.getByRole('button', { name: 'Retry save' }))
+
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Saved'))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(saveSceneMock).toHaveBeenCalledTimes(2)
+
+    // Suspension fully lifted: a later manual save reaches the server again.
+    act(() => {
+      useEditorStore.getState().insert('asset-c')
+    })
+    saveSceneMock.mockResolvedValueOnce({ version: 2, objects: [] })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(saveSceneMock).toHaveBeenCalledTimes(3))
+  })
+
+  // Codex fix (PR #54, finding 2): state.error is also populated by EditorCanvas/PrintGroupPanel
+  // for unrelated geometry/print-group failures and must stay visible outside the invalid state.
+  it('shows a general store error during normal saved/unsaved states without duplicating the invalid-state alert', async () => {
+    await signIn()
+
+    act(() => {
+      useEditorStore.getState().setError('Failed to load object geometry.')
+    })
+    expect(screen.getByRole('alert')).toHaveTextContent('Failed to load object geometry.')
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+
+    // Once a save actually fails validation, the invalid-state alert takes over and the general
+    // banner (which would otherwise show the very same store field) steps aside — never both.
+    saveSceneMock.mockRejectedValueOnce(new ApiError(422, 'INVALID_SCENE', 'too many objects'))
+    act(() => {
+      useEditorStore.getState().insert('asset-a')
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Save failed'))
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(screen.getByRole('alert')).toHaveTextContent(/could not be saved/i)
+  })
+
+  it('on a 409 conflict, renders a prominent alertdialog with only a reload action; reload refetches the scene and resumes normal saving', async () => {
+    saveSceneMock.mockRejectedValueOnce(new ApiError(409, 'SCENE_VERSION_CONFLICT', 'stale version'))
+    await signIn()
+    act(() => {
+      useEditorStore.getState().insert('asset-a')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    const dialog = await screen.findByRole('alertdialog')
+    const reloadButton = within(dialog).getByRole('button', { name: 'Reload latest scene' })
+    expect(document.activeElement).toBe(reloadButton)
+    expect(screen.queryByRole('button', { name: /overwrite/i })).not.toBeInTheDocument()
+
+    fetchSceneMock.mockResolvedValueOnce({ version: 9, objects: [] })
+    fireEvent.click(reloadButton)
+
+    await waitFor(() => expect(fetchSceneMock).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    expect(useEditorStore.getState().sceneVersion).toBe(9)
+    expect(screen.getByRole('status')).toHaveTextContent('Saved')
+
+    // Autosave resumed: a fresh edit followed by a manual Save reaches the server again.
+    saveSceneMock.mockResolvedValueOnce({ version: 10, objects: [] })
+    act(() => {
+      useEditorStore.getState().insert('asset-b')
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(saveSceneMock).toHaveBeenCalledTimes(2))
+  })
+
+  // Codex fix (PR #54, finding 3): aria-modal alone does not stop keyboard/pointer users from
+  // reaching the editor behind the conflict dialog — the rest of the app must be made inert.
+  it('marks the rest of the editor inert while the conflict dialog is open, and interactive again once it closes', async () => {
+    saveSceneMock.mockRejectedValueOnce(new ApiError(409, 'SCENE_VERSION_CONFLICT', 'stale version'))
+    await signIn()
+    act(() => {
+      useEditorStore.getState().insert('asset-a')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await screen.findByRole('alertdialog')
+
+    const deleteButton = screen.getByRole('button', { name: 'Delete' })
+    expect(deleteButton.closest('[inert]')).not.toBeNull()
+
+    fetchSceneMock.mockResolvedValueOnce({ version: 9, objects: [] })
+    fireEvent.click(screen.getByRole('button', { name: 'Reload latest scene' }))
+
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    expect(deleteButton.closest('[inert]')).toBeNull()
+  })
+
+  // Codex fix (PR #54, finding 4): a stale failed-reload message must not survive a later
+  // successful reload.
+  it('clears a failed-reload error once a subsequent reload attempt succeeds', async () => {
+    saveSceneMock.mockRejectedValueOnce(new ApiError(409, 'SCENE_VERSION_CONFLICT', 'stale version'))
+    await signIn()
+    act(() => {
+      useEditorStore.getState().insert('asset-a')
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    const reloadButton = await screen.findByRole('button', { name: 'Reload latest scene' })
+
+    fetchSceneMock.mockRejectedValueOnce(new Error('network error'))
+    fireEvent.click(reloadButton)
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Failed to reload the scene.'))
+
+    fetchSceneMock.mockResolvedValueOnce({ version: 9, objects: [] })
+    fireEvent.click(reloadButton)
+
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument())
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('warns before unload while the scene has unsaved changes, and stays silent once saved', async () => {
+    await signIn()
+
+    const cleanEvent = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(cleanEvent)
+    expect(cleanEvent.defaultPrevented).toBe(false)
+
+    act(() => {
+      useEditorStore.getState().insert('asset-a')
+    })
+
+    const dirtyEvent = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(dirtyEvent)
+    expect(dirtyEvent.defaultPrevented).toBe(true)
   })
 
   it('wires a mode switch control to the active transform mode', async () => {
@@ -271,7 +451,7 @@ describe('App', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
-    await waitFor(() => expect(saveSceneMock).toHaveBeenCalledWith('project-1', { objects: [] }))
+    await waitFor(() => expect(saveSceneMock).toHaveBeenCalledWith('project-1', { objects: [], version: null }))
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Saved'))
     expect(screen.getByRole('status')).not.toHaveTextContent('Unsaved changes')
   })
