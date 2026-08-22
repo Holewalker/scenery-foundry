@@ -16,6 +16,14 @@ export interface AutosaveDeps {
   projectId: string
   store: AutosaveStoreApi
   saveScene: (projectId: string, scene: SceneDto) => Promise<SceneDto>
+  /**
+   * Fetches the current scene so the scheduler can reconcile version drift after an ambiguous
+   * network/5xx save failure before blindly resending (ADR-0007, "Reintento tras respuesta
+   * ambigua"). Only `.version` is used; there is no lighter version-only endpoint yet, so callers
+   * currently pass the same `fetchScene` used for the initial load. A dedicated lightweight
+   * "current version" endpoint would avoid pulling the full scene payload just to reconcile.
+   */
+  fetchScene: (projectId: string) => Promise<SceneDto>
   idleMs?: number
   ceilingMs?: number
   maxRetries?: number
@@ -53,6 +61,7 @@ export function createAutosaveScheduler(deps: AutosaveDeps): AutosaveScheduler {
     projectId,
     store,
     saveScene,
+    fetchScene,
     idleMs = 2000,
     ceilingMs = 15000,
     maxRetries = 5,
@@ -70,6 +79,10 @@ export function createAutosaveScheduler(deps: AutosaveDeps): AutosaveScheduler {
   let suspended = false // conflict / invalid — no auto-retry until reload()/user action
   let attempt = 0
   let stopped = false
+  // Bumped on stop() so in-flight requests started by this instance can recognize, once their
+  // awaited promise settles, that this scheduler is done with them and must not mutate the store
+  // (e.g. the component unmounted/remounted or another project's scheduler now owns the store).
+  let generation = 0
 
   function clearIdle(): void {
     if (idleTimer) {
@@ -133,11 +146,15 @@ export function createAutosaveScheduler(deps: AutosaveDeps): AutosaveScheduler {
     inFlight = true
     store.setSaveState('saving')
     const revisionAtSend = store.getRevision()
-    const dto: SceneDto = { ...store.toSceneDto(), version: store.getSceneVersion() }
+    const sentVersion = store.getSceneVersion()
+    const dto: SceneDto = { ...store.toSceneDto(), version: sentVersion }
+    const requestGeneration = generation
 
     try {
       const saved = await saveScene(projectId, dto)
       inFlight = false
+      if (requestGeneration !== generation) return // stopped mid-flight: discard the stale result
+
       attempt = 0
       store.markSaved(saved.version ?? null, revisionAtSend)
       store.setSaveState('saved')
@@ -150,11 +167,12 @@ export function createAutosaveScheduler(deps: AutosaveDeps): AutosaveScheduler {
     } catch (error) {
       inFlight = false
       pendingWhileInFlight = false
-      await handleError(error)
+      if (requestGeneration !== generation) return // stopped mid-flight: discard the stale result
+      await handleError(error, sentVersion, revisionAtSend)
     }
   }
 
-  async function handleError(error: unknown): Promise<void> {
+  async function handleError(error: unknown, sentVersion: number | null, revisionAtSend: number): Promise<void> {
     const status = (error as ApiErrorLike)?.status
 
     if (status === 409) {
@@ -180,7 +198,13 @@ export function createAutosaveScheduler(deps: AutosaveDeps): AutosaveScheduler {
       return
     }
 
-    // Network error or 5xx: bounded retry with exponential backoff and full jitter.
+    // Network error or 5xx: it's ambiguous whether the PUT actually applied before the response
+    // was lost, so a bounded retry with exponential backoff reconciles with the server first
+    // (ADR-0007, "Reintento tras respuesta ambigua") instead of blindly resending.
+    scheduleReconciledRetry(sentVersion, revisionAtSend)
+  }
+
+  function scheduleReconciledRetry(sentVersion: number | null, revisionAtSend: number): void {
     attempt += 1
     if (attempt > maxRetries || !isOnline()) {
       store.setSaveState('offline')
@@ -189,8 +213,63 @@ export function createAutosaveScheduler(deps: AutosaveDeps): AutosaveScheduler {
     store.setSaveState('retrying')
     const delay = backoffDelayMs(attempt, baseBackoffMs, maxBackoffMs, jitter)
     backoffTimer = setTimeout(() => {
-      void flush()
+      void reconcileBeforeRetry(sentVersion, revisionAtSend)
     }, delay)
+  }
+
+  /**
+   * Runs only on the network/5xx retry path (never on a direct 409, which the server already
+   * compared against the live version in the same request and is always a real conflict).
+   * Reconciles the ambiguous outcome of the failed PUT before resending, per ADR-0007.
+   */
+  async function reconcileBeforeRetry(sentVersion: number | null, revisionAtSend: number): Promise<void> {
+    if (stopped || suspended) return
+    const requestGeneration = generation
+
+    let currentScene: SceneDto
+    try {
+      currentScene = await fetchScene(projectId)
+    } catch {
+      if (requestGeneration !== generation) return // stopped mid-flight: discard the stale result
+      // The reconciliation GET itself failed the same way — keep the normal backoff/retry loop
+      // going rather than guessing at the outcome.
+      scheduleReconciledRetry(sentVersion, revisionAtSend)
+      return
+    }
+    if (requestGeneration !== generation) return // stopped mid-flight: discard the stale result
+
+    const serverVersion = currentScene.version ?? null
+
+    if (serverVersion === sentVersion) {
+      // The original PUT never applied: resending unchanged is safe.
+      void flush()
+      return
+    }
+
+    const revisionUnchangedSinceSend = store.getRevision() === revisionAtSend
+    const oneVersionAhead =
+      sentVersion !== null && serverVersion !== null && serverVersion === sentVersion + 1
+
+    if (oneVersionAhead && revisionUnchangedSinceSend) {
+      // The original PUT actually applied; the response was just lost in transit.
+      attempt = 0
+      store.markSaved(serverVersion, revisionAtSend)
+      store.setSaveState('saved')
+      return
+    }
+
+    if (oneVersionAhead) {
+      // New edits happened while the response was in flight — not an external conflict: adopt
+      // the server's version as the new baseline and retry once with it.
+      store.markSaved(serverVersion, revisionAtSend)
+      void flush()
+      return
+    }
+
+    // Any other server version is a genuine external conflict.
+    suspended = true
+    clearAllTimers()
+    store.setSaveState('conflict')
   }
 
   function reload(): void {
@@ -208,6 +287,7 @@ export function createAutosaveScheduler(deps: AutosaveDeps): AutosaveScheduler {
 
   function stop(): void {
     stopped = true
+    generation += 1
     clearAllTimers()
   }
 
