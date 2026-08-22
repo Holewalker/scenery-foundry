@@ -32,6 +32,8 @@ geometry-worker/.ruff_cache/
 /data/
 data/
 tmp/
+/backups/
+backups/
 
 # Logs
 *.log
