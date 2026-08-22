@@ -14,6 +14,7 @@ public final class InMemoryOwnedSceneRepository implements OwnedSceneRepository 
     private final Map<UUID, Project> projects = new HashMap<>();
     private final Map<UUID, List<PreparedAsset>> assets = new HashMap<>();
     private final Map<UUID, List<SceneObject>> scenes = new HashMap<>();
+    private final Map<UUID, Long> sceneVersions = new HashMap<>();
     /** assetId -> owning owner, so {@link #findReadyAssetIds} never leaks a ready asset across owners. */
     private final Map<UUID, UUID> readyAssetOwners = new HashMap<>();
 
@@ -33,10 +34,33 @@ public final class InMemoryOwnedSceneRepository implements OwnedSceneRepository 
     @Override public Optional<PreparedAsset> findAsset(UUID projectId, UUID assetId) {
         return findAssets(projectId).stream().filter(asset -> asset.id().equals(assetId)).findFirst();
     }
-    @Override public List<SceneObject> findSceneObjects(UUID projectId) {
+    @Override public synchronized List<SceneObject> findSceneObjects(UUID projectId) {
         return scenes.getOrDefault(projectId, List.of()).stream().sorted(Comparator.comparing(object -> object.id().value())).toList();
     }
-    @Override public void replaceScene(UUID projectId, List<SceneObject> objects) { scenes.put(projectId, List.copyOf(objects)); }
+    @Override public synchronized Optional<Long> replaceScene(UUID projectId, long expectedVersion, List<SceneObject> objects) {
+        long current = sceneVersions.getOrDefault(projectId, 0L);
+        if (current != expectedVersion) return Optional.empty();
+        long next = current + 1;
+        sceneVersions.put(projectId, next);
+        scenes.put(projectId, List.copyOf(objects));
+        return Optional.of(next);
+    }
+    /** Unconditional last-writer-wins (Codex PR #52 finding 2): {@code synchronized} so two concurrent
+     * unchecked writers against this in-memory map still serialize rather than lose an update or corrupt
+     * the backing {@link HashMap}s — mirroring the row lock {@link JdbcOwnedSceneRepository} takes. */
+    @Override public synchronized long replaceSceneUnchecked(UUID projectId, List<SceneObject> objects) {
+        long next = sceneVersions.getOrDefault(projectId, 0L) + 1;
+        sceneVersions.put(projectId, next);
+        scenes.put(projectId, List.copyOf(objects));
+        return next;
+    }
+    @Override public synchronized long findSceneVersion(UUID projectId) { return sceneVersions.getOrDefault(projectId, 0L); }
+    /** {@code synchronized} so the version/objects pair can never straddle a concurrent
+     * {@link #replaceScene}/{@link #replaceSceneUnchecked} the way two independent unsynchronized reads
+     * could (Codex PR #52 finding 1). */
+    @Override public synchronized SceneSnapshot findScene(UUID projectId) {
+        return new SceneSnapshot(findSceneVersion(projectId), findSceneObjects(projectId));
+    }
     @Override public Set<UUID> findReadyAssetIds(UUID ownerId) {
         return readyAssetOwners.entrySet().stream().filter(entry -> entry.getValue().equals(ownerId))
             .map(Map.Entry::getKey).collect(java.util.stream.Collectors.toUnmodifiableSet());

@@ -6,6 +6,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.Test;
@@ -81,14 +86,115 @@ class OwnedSceneMigrationIntegrationTest {
         var project = insertProject(owner);
         var asset = insertAsset(project);
         var original = new SceneObject(SceneObjectId.of(1), project, asset, SceneTransform.of(identity(), new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}));
-        repository.replaceScene(project, List.of(original));
+        repository.replaceScene(project, 0, List.of(original)); // scene_version 0 -> 1
 
         var duplicateWithinBatch = List.of(
             new SceneObject(SceneObjectId.of(2), project, asset, SceneTransform.of(identity(), new double[] {0, 0, 0, 1}, new double[] {1, 1, 1})),
             new SceneObject(SceneObjectId.of(2), project, asset, SceneTransform.of(identity(), new double[] {0, 0, 0, 1}, new double[] {1, 1, 1})));
-        assertThatThrownBy(() -> repository.replaceScene(project, duplicateWithinBatch)).isInstanceOf(Exception.class);
+        assertThatThrownBy(() -> repository.replaceScene(project, 1, duplicateWithinBatch)).isInstanceOf(Exception.class);
 
         assertThat(repository.findSceneObjects(project)).extracting(sceneObject -> sceneObject.id().value()).containsExactly(1L);
+        // the version UPDATE is part of the same rolled-back transaction as the failed insert (D2/ADR-0007).
+        assertThat(repository.findSceneVersion(project)).isEqualTo(1L);
+    }
+
+    /** Task 1.2: real Postgres row lock on `projects` serializes two concurrent writers of the same scene
+     * (ADR-0007 D2) — the loser's conditional UPDATE re-evaluates against the winner's already-committed
+     * version and affects zero rows, so it never reaches the delete/insert of scene_objects. */
+    @Test
+    void interleavedConcurrentSavesSerializeAndTheLoserGetsZeroRowsWithoutMutatingSceneObjects() throws Exception {
+        var owner = insertUser();
+        var project = insertProject(owner);
+        var asset = insertAsset(project);
+        var objectA = new SceneObject(SceneObjectId.of(1), project, asset, SceneTransform.of(identity(), new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}));
+        var objectB = new SceneObject(SceneObjectId.of(2), project, asset, SceneTransform.of(identity(), new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}));
+        var start = new CountDownLatch(1);
+
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var callA = pool.submit(() -> { start.await(); return repository.replaceScene(project, 0, List.of(objectA)); });
+            var callB = pool.submit(() -> { start.await(); return repository.replaceScene(project, 0, List.of(objectB)); });
+            start.countDown();
+            var resultA = callA.get(30, TimeUnit.SECONDS);
+            var resultB = callB.get(30, TimeUnit.SECONDS);
+
+            assertThat(resultA.isPresent() ^ resultB.isPresent()).isTrue();
+            assertThat(repository.findSceneVersion(project)).isEqualTo(1L);
+            long winnerObjectId = resultA.isPresent() ? 1L : 2L;
+            assertThat(repository.findSceneObjects(project)).extracting(sceneObject -> sceneObject.id().value()).containsExactly(winnerObjectId);
+        }
+    }
+
+    /** Codex PR #52 finding 1, against real Postgres: {@link JdbcOwnedSceneRepository#findScene} must return
+     * a version/object-count pair that is always mutually consistent, even while a writer keeps committing
+     * concurrently. The writer's invariant (scene version N always carries exactly N objects, established
+     * inside the SAME transaction that advances the version — see {@code writeSceneObjects}) makes a torn
+     * read observable: two independent {@code findSceneVersion}/{@code findSceneObjects} calls could
+     * legitimately return a version and an object count that don't match this invariant if a commit landed
+     * between them. The single-statement {@code LEFT JOIN} read this fix uses cannot straddle a commit, so
+     * this must never mismatch. */
+    @Test
+    void findSceneReturnsAConsistentVersionObjectCountPairEvenWithConcurrentWrites() throws Exception {
+        var owner = insertUser();
+        var project = insertProject(owner);
+        var asset = insertAsset(project);
+        int totalWrites = 25;
+        var stop = new AtomicBoolean(false);
+        var mismatches = new AtomicInteger(0);
+        var reads = new AtomicInteger(0);
+
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var writer = pool.submit(() -> {
+                long version = 0;
+                for (int objectCount = 1; objectCount <= totalWrites; objectCount++) {
+                    var objects = IntStream.rangeClosed(1, objectCount)
+                        .mapToObj(id -> new SceneObject(SceneObjectId.of(id), project, asset,
+                            SceneTransform.of(identity(), new double[] {0, 0, 0, 1}, new double[] {1, 1, 1})))
+                        .toList();
+                    version = repository.replaceScene(project, version, objects).orElseThrow();
+                }
+                stop.set(true);
+                return null;
+            });
+            var reader = pool.submit(() -> {
+                while (!stop.get()) {
+                    var snapshot = repository.findScene(project);
+                    reads.incrementAndGet();
+                    // scene version N always carries exactly N objects by writer construction above.
+                    if (snapshot.version() > 0 && snapshot.objects().size() != snapshot.version()) mismatches.incrementAndGet();
+                }
+                return null;
+            });
+            writer.get(60, TimeUnit.SECONDS);
+            reader.get(60, TimeUnit.SECONDS);
+        }
+
+        assertThat(reads.get()).isGreaterThan(0);
+        assertThat(mismatches.get()).isZero();
+    }
+
+    /** Codex PR #52 finding 2, against real Postgres: two clients that both omit {@code version} must both
+     * succeed — true last-writer-wins via {@link JdbcOwnedSceneRepository#replaceSceneUnchecked}'s
+     * unconditional {@code UPDATE} — never a spurious conflict from comparing against a version either one
+     * separately read moments earlier. */
+    @Test
+    void concurrentUncheckedWritesBothSucceedWithTrueLastWriterWinsAndNoFalseConflict() throws Exception {
+        var owner = insertUser();
+        var project = insertProject(owner);
+        var asset = insertAsset(project);
+        var objectA = new SceneObject(SceneObjectId.of(1), project, asset, SceneTransform.of(identity(), new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}));
+        var objectB = new SceneObject(SceneObjectId.of(2), project, asset, SceneTransform.of(identity(), new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}));
+        var start = new CountDownLatch(1);
+
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var callA = pool.submit(() -> { start.await(); return repository.replaceSceneUnchecked(project, List.of(objectA)); });
+            var callB = pool.submit(() -> { start.await(); return repository.replaceSceneUnchecked(project, List.of(objectB)); });
+            start.countDown();
+            long versionA = callA.get(30, TimeUnit.SECONDS); // must not throw: no compare-and-swap in the unchecked path
+            long versionB = callB.get(30, TimeUnit.SECONDS); // must not throw: no compare-and-swap in the unchecked path
+
+            assertThat(Set.of(versionA, versionB)).isEqualTo(Set.of(1L, 2L));
+            assertThat(repository.findSceneVersion(project)).isEqualTo(2L);
+        }
     }
 
     private UUID insertUser() {

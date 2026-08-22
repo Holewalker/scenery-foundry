@@ -24,11 +24,15 @@ server:
 spring.servlet.multipart:
   max-file-size: 205MB
   max-request-size: 210MB
+app:
+  scene:
+    # ADR-0007 transitional flag: flips to true in PR5, once PR2's frontend always sends `version`.
+    require-version: false
 management:
   endpoints:
     web:
       exposure:
-        include: health
+        include: health,info,metrics
   endpoint:
     health:
       probes:
