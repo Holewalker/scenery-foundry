@@ -172,6 +172,10 @@ postgres
 
 La SPA puede compilarse y ser servida estáticamente por Caddy. Solo 80/443 se publican externamente.
 
+La topología completa de despliegue en un único VPS —TLS automático vía DuckDNS + ACME, ausencia
+de puertos publicados en backend/frontend, secretos, backups y observabilidad— deja de ser una
+asunción de esta sección y queda fijada en [ADR-0008](adr/0008-topologia-de-despliegue-y-operacion.md).
+
 ## Testing
 
 - backend: unit + integración con PostgreSQL real/Testcontainers + autorización;
