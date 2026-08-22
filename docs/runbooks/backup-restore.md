@@ -58,10 +58,15 @@ unverified backup does not count as a backup.
    ( cd "$BACKUP_DIR" && sha256sum -c manifest.sha256 )
    ```
 4. Restore the database (into the real database — only do this when you actually intend to
-   replace current data; recreate the target database first if it must be empty):
+   replace current data; recreate the target database first if it must be empty). Run
+   `pg_restore` *inside* the `postgres` container's own shell (single-quoted `bash -c`) so
+   `$POSTGRES_USER`/`$POSTGRES_DB` expand from that service's Compose-wired `environment:`
+   instead of an empty host shell — this is the same "resolve inside the container" approach
+   `restore-smoke.sh` uses:
    ```sh
-   docker compose exec -T postgres pg_restore --no-owner --no-privileges \
-     -U "$POSTGRES_USER" -d "$POSTGRES_DB" - < "$BACKUP_DIR/db.dump"
+   docker compose exec -T postgres bash -c \
+     'pg_restore --no-owner --no-privileges -U "$POSTGRES_USER" -d "$POSTGRES_DB"' \
+     < "$BACKUP_DIR/db.dump"
    ```
 5. Restore the original STLs into `./data`:
    ```sh
