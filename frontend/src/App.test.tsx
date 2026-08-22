@@ -7,6 +7,12 @@ const fetchAssetsMock = vi.fn()
 const fetchSceneMock = vi.fn()
 const saveSceneMock = vi.fn()
 const uploadAssetMock = vi.fn()
+// PrintGroupPanel/ExportPanel are mounted by App.tsx (Phase 4 wiring) and call these on render.
+const fetchPrintGroupsMock = vi.fn()
+const createPrintGroupMock = vi.fn()
+const deletePrintGroupMock = vi.fn()
+const captureCombinedExportMock = vi.fn()
+const fetchCombinedExportStatusMock = vi.fn()
 const confirmMock = vi.spyOn(window, 'confirm')
 vi.mock('./api/client', () => ({
   login: (...args: unknown[]) => loginMock(...args),
@@ -14,6 +20,11 @@ vi.mock('./api/client', () => ({
   fetchScene: (...args: unknown[]) => fetchSceneMock(...args),
   saveScene: (...args: unknown[]) => saveSceneMock(...args),
   uploadAsset: (...args: unknown[]) => uploadAssetMock(...args),
+  fetchPrintGroups: (...args: unknown[]) => fetchPrintGroupsMock(...args),
+  createPrintGroup: (...args: unknown[]) => createPrintGroupMock(...args),
+  deletePrintGroup: (...args: unknown[]) => deletePrintGroupMock(...args),
+  captureCombinedExport: (...args: unknown[]) => captureCombinedExportMock(...args),
+  fetchCombinedExportStatus: (...args: unknown[]) => fetchCombinedExportStatusMock(...args),
 }))
 vi.mock('./editor/EditorCanvas', () => ({
   EditorCanvas: () => <div data-testid="editor-canvas" />,
@@ -36,6 +47,11 @@ beforeEach(() => {
   fetchSceneMock.mockReset().mockResolvedValue({ objects: [] })
   saveSceneMock.mockReset().mockResolvedValue({ objects: [] })
   uploadAssetMock.mockReset()
+  fetchPrintGroupsMock.mockReset().mockResolvedValue([])
+  createPrintGroupMock.mockReset()
+  deletePrintGroupMock.mockReset()
+  captureCombinedExportMock.mockReset()
+  fetchCombinedExportStatusMock.mockReset()
   confirmMock.mockReset().mockReturnValue(true)
   window.history.replaceState({}, '', '/?project=project-1')
 })
@@ -148,6 +164,17 @@ describe('App', () => {
     }
   })
 
+  it('mounts PrintGroupPanel with the current project, and its Pieces Export link per group with ExportPanel (final Phase 4 wiring)', async () => {
+    fetchPrintGroupsMock.mockResolvedValue([{ id: 'group-1', name: 'Batch 1' }])
+    await signIn()
+
+    expect(fetchPrintGroupsMock).toHaveBeenCalledWith('project-1')
+    await waitFor(() => expect(screen.getByText('Batch 1')).toBeInTheDocument())
+    const link = screen.getByRole('link', { name: /download pieces/i })
+    expect(link).toHaveAttribute('href', '/api/print-groups/group-1/pieces-export')
+    expect(screen.getByRole('button', { name: 'Start combined export' })).toBeInTheDocument()
+  })
+
   it('places the asset catalog and viewport inside distinct panel containers', async () => {
     await signIn()
 
@@ -156,9 +183,17 @@ describe('App', () => {
 
     expect(catalogPanel).not.toBeNull()
     expect(viewportPanel).not.toBeNull()
-    expect(within(catalogPanel as HTMLElement).getByRole('list')).toBeInTheDocument()
+    // Phase 4 wiring added PrintGroupPanel's own (empty) list alongside the asset catalog's.
+    expect(within(catalogPanel as HTMLElement).getAllByRole('list')).toHaveLength(2)
     expect(within(viewportPanel as HTMLElement).getByTestId('editor-canvas')).toBeInTheDocument()
-    expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual(['Move', 'Rotate', 'Snap', 'Delete', 'Save'])
+    expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual([
+      'Create', // PrintGroupPanel's "New print group" form
+      'Move',
+      'Rotate',
+      'Snap',
+      'Delete',
+      'Save',
+    ])
   })
 
   it('toggles snap on and off via the Snap button', async () => {

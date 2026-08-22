@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { captureCombinedExport, fetchCombinedExportStatus } from '../api/client'
 import type { CombinedExportStatusValue } from '../api/client'
+import { useEditorStore } from './store'
 
 const POLL_INTERVAL_MS = 2000
 const MAX_CONSECUTIVE_POLL_FAILURES = 5
@@ -15,6 +16,11 @@ interface ExportPanelProps {
 // mutating POST; the download link renders only once polling reports COMPLETED (never
 // RUNNING/FAILED/PENDING), mirroring the backend's own download gate.
 export function ExportPanel({ printGroupId }: ExportPanelProps) {
+  // Both export endpoints read PERSISTED scene_objects — an unsaved local assignment or
+  // transform is invisible to them (Codex finding on PR8, #49: clicking export while dirty
+  // would silently export the scene's previous, already-saved state). Gate both actions on the
+  // editor being clean, matching how the toolbar's own Save button already surfaces this state.
+  const dirty = useEditorStore((state) => state.dirty)
   const [exportId, setExportId] = useState<string | null>(null)
   const [status, setStatus] = useState<CombinedExportStatusValue | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -51,6 +57,7 @@ export function ExportPanel({ printGroupId }: ExportPanelProps) {
   }, [exportId, status])
 
   async function handleCapture() {
+    if (dirty) return // defensive: the button is already disabled while dirty
     const operation = ++operationRef.current // supersedes any in-flight capture/poll from before
     setError(null)
     setStatus(null)
@@ -73,12 +80,17 @@ export function ExportPanel({ printGroupId }: ExportPanelProps) {
 
   return (
     <div className="export-panel">
-      <a href={`/api/print-groups/${printGroupId}/pieces-export`} download>
-        Download pieces (ZIP)
-      </a>
-      <button type="button" onClick={() => void handleCapture()} disabled={capturing}>
+      {dirty ? (
+        <span aria-disabled="true">Download pieces (ZIP)</span>
+      ) : (
+        <a href={`/api/print-groups/${printGroupId}/pieces-export`} download>
+          Download pieces (ZIP)
+        </a>
+      )}
+      <button type="button" onClick={() => void handleCapture()} disabled={capturing || dirty}>
         Start combined export
       </button>
+      {dirty && <p role="note">Save your changes to export the current scene</p>}
       {status && <p role="status">{status}</p>}
       {error && <p role="alert">{error}</p>}
       {canDownload && (

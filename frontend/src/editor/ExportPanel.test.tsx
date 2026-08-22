@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ExportPanel } from './ExportPanel'
+import { resetEditorStore, useEditorStore } from './store'
 
 const captureCombinedExportMock = vi.fn()
 const fetchCombinedExportStatusMock = vi.fn()
@@ -18,6 +19,7 @@ async function flush(advanceMs = 0): Promise<void> {
 }
 
 beforeEach(() => {
+  resetEditorStore()
   captureCombinedExportMock.mockReset()
   fetchCombinedExportStatusMock.mockReset()
 })
@@ -140,4 +142,31 @@ it('disables the capture button while a capture is in flight, preventing a concu
   resolveCapture({ id: 'export-1' })
   await flush()
   expect(button).not.toBeDisabled()
+})
+
+it('disables both export actions while the scene has unsaved changes (Codex finding, PR8 #49)', async () => {
+  useEditorStore.setState({ dirty: true })
+
+  render(<ExportPanel printGroupId="group-1" />)
+
+  expect(screen.getByRole('button', { name: 'Start combined export' })).toBeDisabled()
+  expect(screen.queryByRole('link', { name: /download pieces/i })).not.toBeInTheDocument()
+  expect(screen.getByRole('note')).toHaveTextContent(/save your changes/i)
+
+  fireEvent.click(screen.getByRole('button', { name: 'Start combined export' }))
+  await flush()
+  expect(captureCombinedExportMock).not.toHaveBeenCalled()
+})
+
+it('re-enables both export actions once the scene is saved (dirty clears)', async () => {
+  useEditorStore.setState({ dirty: true })
+  const { rerender } = render(<ExportPanel printGroupId="group-1" />)
+  expect(screen.getByRole('button', { name: 'Start combined export' })).toBeDisabled()
+
+  useEditorStore.setState({ dirty: false })
+  rerender(<ExportPanel printGroupId="group-1" />)
+
+  expect(screen.getByRole('button', { name: 'Start combined export' })).not.toBeDisabled()
+  expect(screen.getByRole('link', { name: /download pieces/i })).toBeInTheDocument()
+  expect(screen.queryByRole('note')).not.toBeInTheDocument()
 })
