@@ -114,7 +114,13 @@ services:
   caddy:
     image: caddy:2-alpine
     profiles: [prod]
-    env_file: .env
+    # Explicit allowlist, not `env_file: .env` (ADR-0008): this is the only Internet-facing
+    # container in the stack, so it must never receive POSTGRES_PASSWORD/WORKER_DB_PASSWORD/
+    # DUCKDNS_TOKEN — it only needs DOMAIN and ACME_EMAIL, both required (`:?`) so a missing
+    # value fails `docker compose config`/`up` loudly instead of starting with an empty vhost.
+    environment:
+      DOMAIN: ${DOMAIN:?DOMAIN must be set}
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL must be set}
     ports:
       - "80:80"
       - "443:443"

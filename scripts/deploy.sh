@@ -11,6 +11,9 @@ cd "$repo"
 if [ ! -f .env ]; then
   echo "==> No .env found. Copying .env.example -> .env"
   cp .env.example .env
+  # Restrict permissions immediately (ADR-0008): with a typical 022 umask the freshly-copied
+  # file would otherwise be world-readable while the operator edits real credentials into it.
+  chmod 600 .env
   echo ""
   echo "    Edit .env with real values, then re-run this script:"
   echo "      nano .env"
@@ -33,7 +36,9 @@ if [ -n "$missing" ]; then
   exit 1
 fi
 
-# Secrets live in .env; keep it unreadable to other users on a shared VPS (ADR-0008).
+# Secrets live in .env; keep it unreadable to other users on a shared VPS (ADR-0008). Normally
+# already 600 from the copy step above, but re-assert in case an existing .env was created some
+# other way (e.g. manually, before this script's chmod-on-copy behavior existed).
 current_perms="$(stat -c%a .env 2>/dev/null || stat -f%Lp .env 2>/dev/null || echo "")"
 if [ "$current_perms" != "600" ]; then
   echo "==> Restricting .env permissions to 600"
