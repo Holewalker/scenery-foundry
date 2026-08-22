@@ -8,13 +8,20 @@ x-logging: &default-logging
     max-size: "10m"
     max-file: "5"
 
+# ADR-0008 D11: this file is the DEPLOYABLE BASE — no `backend`/`frontend` app ports are
+# published here, because Compose MERGES `ports` lists across files (an overlay can only ADD a
+# published port, never remove one). `caddy`, `duckdns`, and `backup` are gated behind
+# `profiles: [prod]`, so a plain `docker compose up` (local dev; auto-loads compose.override.yml
+# for loopback ports) never starts them, while `docker compose -f compose.yml --profile prod up
+# -d` (scripts/deploy.sh) starts every service — the profile-less ones plus the `prod` ones —
+# with `-f` explicitly suppressing the override file's auto-load.
 services:
   postgres:
     image: postgres:18.4
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-scenery_foundry}
       POSTGRES_USER: ${POSTGRES_USER:-scenery}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scenery-local}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
     volumes:
       - postgres-data:/var/lib/postgresql
     healthcheck:
@@ -23,6 +30,8 @@ services:
       timeout: 3s
       retries: 10
     logging: *default-logging
+    mem_limit: 1g
+    cpus: 1
     restart: unless-stopped
 
   backend:
@@ -32,14 +41,14 @@ services:
     environment:
       DATABASE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-scenery_foundry}
       DATABASE_USER: ${POSTGRES_USER:-scenery}
-      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-scenery-local}
-      SESSION_COOKIE_SECURE: "false"
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      # ADR-0008: deploy-profile default is secure now that Caddy terminates TLS in front of
+      # this container. compose.override.yml flips it back to "false" for plain-HTTP local dev.
+      SESSION_COOKIE_SECURE: "true"
       WORKER_DB_PASSWORD: ${WORKER_DB_PASSWORD:?WORKER_DB_PASSWORD must be set}
       APP_GEOMETRYJOB_SCHEDULING_ENABLED: "true"
     volumes:
       - ./data:/data
-    ports:
-      - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -49,6 +58,8 @@ services:
       timeout: 3s
       retries: 10
     logging: *default-logging
+    mem_limit: 1g
+    cpus: 1
     restart: unless-stopped
 
   geometry-worker:
@@ -74,13 +85,15 @@ services:
       timeout: 3s
       retries: 5
     logging: *default-logging
+    # Largest headroom of any service (ADR-0008): mesh work is unbounded relative to input size
+    # (ADR-0006 admits up to 5M output triangles), so this is the real memory risk in the stack.
+    mem_limit: 3g
+    cpus: 2
     restart: unless-stopped
 
   frontend:
     build:
       context: ./frontend
-    ports:
-      - "127.0.0.1:${FRONTEND_PORT:-8081}:80"
     depends_on:
       backend:
         condition: service_healthy
@@ -90,16 +103,58 @@ services:
       timeout: 3s
       retries: 5
     logging: *default-logging
+    mem_limit: 64m
+    cpus: 0.25
+    restart: unless-stopped
+
+  # ADR-0008: the single public edge. Terminates TLS on 80/443 (the only published ports in the
+  # whole stack), obtains certificates automatically via Caddy's built-in ACME against {$DOMAIN}
+  # (kept resolvable by the `duckdns` sidecar, D4), and routes /api/* to backend / everything
+  # else to frontend (see Caddyfile) — so /actuator/* is unroutable from the public internet.
+  caddy:
+    image: caddy:2-alpine
+    profiles: [prod]
+    env_file: .env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+    logging: *default-logging
+    mem_limit: 128m
+    cpus: 0.25
+    restart: unless-stopped
+
+  # ADR-0008 D4: keeps <DUCKDNS_SUBDOMAIN>.duckdns.org's A record current so Caddy's ACME
+  # challenge resolves against a real domain. Same image/shape as the sibling 000Libre project.
+  duckdns:
+    image: lscr.io/linuxserver/duckdns:latest
+    profiles: [prod]
+    environment:
+      SUBDOMAINS: ${DUCKDNS_SUBDOMAIN}
+      TOKEN: ${DUCKDNS_TOKEN}
+      UPDATE_IP: ipv4
+    logging: *default-logging
+    mem_limit: 32m
+    cpus: 0.1
     restart: unless-stopped
 
   backup:
     image: postgres:18.4
+    profiles: [prod]
     command: ["/scripts/backup/run.sh"]
     environment:
       POSTGRES_HOST: postgres
       POSTGRES_DB: ${POSTGRES_DB:-scenery_foundry}
       POSTGRES_USER: ${POSTGRES_USER:-scenery}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scenery-local}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
       DATA_ROOT: /data
       BACKUP_ROOT: /backups
       BACKUP_HOUR_UTC: ${BACKUP_HOUR_UTC:-3}
@@ -113,7 +168,11 @@ services:
       postgres:
         condition: service_healthy
     logging: *default-logging
+    mem_limit: 256m
+    cpus: 0.5
     restart: unless-stopped
 
 volumes:
   postgres-data:
+  caddy-data:
+  caddy-config:

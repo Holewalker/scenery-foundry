@@ -33,7 +33,14 @@ spring.servlet.multipart:
   max-request-size: 210MB
 app:
   scene:
-    # ADR-0007 transitional flag: flips to true in PR5, once PR2's frontend always sends `version`.
+    # ADR-0007 transitional flag: design's PR5 migration sequencing calls for flipping this to
+    # true now that PR2a/PR2b shipped a frontend that always sends `version`. NOT flipped in this
+    # PR: doing so breaks OwnedSceneMigrationIntegrationTest (7/14 tests fail — confirmed by a
+    # real test run), because that @SpringBootTest uses the null-version convenience constructor
+    # `new SceneDtos.SceneDto(List.of(...))` at ~15 call sites with no TestPropertySource
+    # override. Fixing it means editing backend Java test code, which is out of this PR's
+    # explicitly authorized scope (application.yml only). See apply-progress for the follow-up
+    # required before this flag can flip. Left at false: zero behavior change from PR4.
     require-version: false
 management:
   endpoints:

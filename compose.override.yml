@@ -1,0 +1,23 @@
+# Local-development-only overlay. Compose auto-loads this alongside compose.yml for a plain
+# `docker compose up` (https://docs.docker.com/compose/how-tos/multiple-compose-files/merge/).
+# `scripts/deploy.sh` runs `docker compose -f compose.yml --profile prod up -d --build`; naming
+# `-f` explicitly suppresses auto-loading of override files, so nothing in this file ever
+# reaches a deploy — deliberately: compose.yml (ADR-0008 D11) is the deployable base with no
+# published app ports, precisely because Compose MERGES `ports` lists across files and an
+# overlay could only ADD a port, never remove one.
+services:
+  backend:
+    environment:
+      # Local dev has no TLS in front of the backend (no Caddy without --profile prod), so a
+      # Secure-flagged session cookie would never be sent back by the browser over plain HTTP.
+      SESSION_COOKIE_SECURE: "false"
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8080}:8080"
+
+  frontend:
+    ports:
+      - "127.0.0.1:${FRONTEND_PORT:-8081}:80"
+
+  postgres:
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
