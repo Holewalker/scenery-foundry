@@ -1,15 +1,19 @@
 import json
+import logging
 import os
 import signal
 import threading
-import traceback
 from pathlib import Path
 
 import psycopg
 
 from .claim import claim_job
+from .healthcheck import liveness_marker_path, touch_liveness_marker
 from .job_result import PipelineResult
+from .logging_setup import bind, configure_logging
 from .pipeline import finalize_job, process_job
+
+_logger = logging.getLogger(__name__)
 
 # Both job types are claimable by this single-worker loop (Phase 4 design). The try-order rotates
 # each poll (`_claim_next`) so a saturated ASSET_PROCESSING queue cannot starve COMBINED_EXPORT
@@ -54,7 +58,13 @@ def run_once(
     try:
         result = process_job(job, data_root)
     except Exception:
-        traceback.print_exc()
+        bind(
+            _logger,
+            jobId=str(job.id),
+            jobType=job.payload.get("jobType"),
+            subjectId=str(job.subject_id),
+            workerId=worker_id,
+        ).exception("job_processing_failed")
         if job.payload.get("jobType") == "COMBINED_EXPORT":
             # Deliberately omits `geometryStatus`: that key is ASSET_PROCESSING/AssetProjector's
             # contract and must not appear on a COMBINED_EXPORT row (Phase 4 design).
@@ -70,7 +80,22 @@ def run_once(
     return True
 
 
+def _poll_cycle(
+    conn: psycopg.Connection,
+    data_root: Path,
+    worker_id: str,
+    lease_seconds: int,
+    poll_index: int,
+) -> bool:
+    """One iteration of `main()`'s loop: touches the liveness marker (D9 — every cycle, whether
+    or not a job was claimed, so an idle worker is still reported healthy), then delegates to
+    `run_once`."""
+    touch_liveness_marker(liveness_marker_path())
+    return run_once(conn, data_root, worker_id, lease_seconds, poll_index)
+
+
 def main() -> None:
+    configure_logging()
     database_url = os.environ.get("WORKER_DATABASE_URL")
     if not database_url:
         raise SystemExit("WORKER_DATABASE_URL is required")
@@ -82,17 +107,18 @@ def main() -> None:
 
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
-    print(worker_identity(), flush=True)
 
     data_root = Path(os.environ.get("GEOMETRY_DATA_ROOT", "/data"))
     lease_seconds = int(os.environ.get("WORKER_LEASE_SECONDS", "120"))
     poll_seconds = float(os.environ.get("WORKER_POLL_SECONDS", "2"))
     worker_id = os.environ.get("HOSTNAME", worker_identity())
 
+    bind(_logger, workerId=worker_id).info("worker_started")
+
     poll_index = 0
     with psycopg.connect(database_url, autocommit=False) as conn:
         while not stopped.is_set():
-            handled = run_once(conn, data_root, worker_id, lease_seconds, poll_index)
+            handled = _poll_cycle(conn, data_root, worker_id, lease_seconds, poll_index)
             poll_index += 1
             if not handled:
                 stopped.wait(poll_seconds)
