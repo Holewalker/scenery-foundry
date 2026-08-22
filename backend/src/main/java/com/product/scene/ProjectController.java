@@ -28,7 +28,6 @@ public final class ProjectController {
     @PutMapping("/api/projects/{projectId}/scene")
     SceneDtos.SceneDto putScene(@PathVariable UUID projectId, @RequestBody SceneDtos.SceneDto scene, Authentication authentication) {
         var userId = AuthenticatedUser.from(authentication).userId();
-        service.replaceScene(userId, projectId, scene);
-        return service.loadScene(userId, projectId);
+        return service.replaceScene(userId, projectId, scene);
     }
 }

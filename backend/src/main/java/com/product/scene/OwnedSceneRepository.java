@@ -11,7 +11,10 @@ public interface OwnedSceneRepository {
     List<PreparedAsset> findAssets(UUID projectId);
     Optional<PreparedAsset> findAsset(UUID projectId, UUID assetId);
     List<SceneObject> findSceneObjects(UUID projectId);
-    void replaceScene(UUID projectId, List<SceneObject> objects);
+    /** @return the new {@code scene_version}, or empty when another writer already advanced it past
+     * {@code expectedVersion} (ADR-0007) — conflict is data at this port boundary, not an exception. */
+    Optional<Long> replaceScene(UUID projectId, long expectedVersion, List<SceneObject> objects);
+    long findSceneVersion(UUID projectId);
     /** Owner's asset ids with processing_status=READY, independent of geometry_status (scene-object eligibility). */
     Set<UUID> findReadyAssetIds(UUID ownerId);
 }

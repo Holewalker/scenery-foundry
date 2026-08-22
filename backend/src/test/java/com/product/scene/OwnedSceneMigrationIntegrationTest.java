@@ -6,6 +6,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.Test;
@@ -81,14 +84,42 @@ class OwnedSceneMigrationIntegrationTest {
         var project = insertProject(owner);
         var asset = insertAsset(project);
         var original = new SceneObject(SceneObjectId.of(1), project, asset, SceneTransform.of(identity(), new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}));
-        repository.replaceScene(project, List.of(original));
+        repository.replaceScene(project, 0, List.of(original)); // scene_version 0 -> 1
 
         var duplicateWithinBatch = List.of(
             new SceneObject(SceneObjectId.of(2), project, asset, SceneTransform.of(identity(), new double[] {0, 0, 0, 1}, new double[] {1, 1, 1})),
             new SceneObject(SceneObjectId.of(2), project, asset, SceneTransform.of(identity(), new double[] {0, 0, 0, 1}, new double[] {1, 1, 1})));
-        assertThatThrownBy(() -> repository.replaceScene(project, duplicateWithinBatch)).isInstanceOf(Exception.class);
+        assertThatThrownBy(() -> repository.replaceScene(project, 1, duplicateWithinBatch)).isInstanceOf(Exception.class);
 
         assertThat(repository.findSceneObjects(project)).extracting(sceneObject -> sceneObject.id().value()).containsExactly(1L);
+        // the version UPDATE is part of the same rolled-back transaction as the failed insert (D2/ADR-0007).
+        assertThat(repository.findSceneVersion(project)).isEqualTo(1L);
+    }
+
+    /** Task 1.2: real Postgres row lock on `projects` serializes two concurrent writers of the same scene
+     * (ADR-0007 D2) — the loser's conditional UPDATE re-evaluates against the winner's already-committed
+     * version and affects zero rows, so it never reaches the delete/insert of scene_objects. */
+    @Test
+    void interleavedConcurrentSavesSerializeAndTheLoserGetsZeroRowsWithoutMutatingSceneObjects() throws Exception {
+        var owner = insertUser();
+        var project = insertProject(owner);
+        var asset = insertAsset(project);
+        var objectA = new SceneObject(SceneObjectId.of(1), project, asset, SceneTransform.of(identity(), new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}));
+        var objectB = new SceneObject(SceneObjectId.of(2), project, asset, SceneTransform.of(identity(), new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}));
+        var start = new CountDownLatch(1);
+
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var callA = pool.submit(() -> { start.await(); return repository.replaceScene(project, 0, List.of(objectA)); });
+            var callB = pool.submit(() -> { start.await(); return repository.replaceScene(project, 0, List.of(objectB)); });
+            start.countDown();
+            var resultA = callA.get(30, TimeUnit.SECONDS);
+            var resultB = callB.get(30, TimeUnit.SECONDS);
+
+            assertThat(resultA.isPresent() ^ resultB.isPresent()).isTrue();
+            assertThat(repository.findSceneVersion(project)).isEqualTo(1L);
+            long winnerObjectId = resultA.isPresent() ? 1L : 2L;
+            assertThat(repository.findSceneObjects(project)).extracting(sceneObject -> sceneObject.id().value()).containsExactly(winnerObjectId);
+        }
     }
 
     private UUID insertUser() {

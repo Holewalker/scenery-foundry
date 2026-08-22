@@ -20,5 +20,11 @@ public final class SceneDtos {
         }
     }
 
-    public record SceneDto(List<SceneObjectDto> objects) { }
+    /** {@code version} means "the version I last observed" on a request and "the version now stored" on a
+     * response (ADR-0007 D4) — one field serves both directions, so the client always echoes exactly what
+     * the server last returned. */
+    public record SceneDto(Long version, List<SceneObjectDto> objects) {
+        /** Convenience constructor for a transitional client that never sends a version. */
+        public SceneDto(List<SceneObjectDto> objects) { this(null, objects); }
+    }
 }

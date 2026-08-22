@@ -49,9 +49,20 @@ public class JdbcOwnedSceneRepository implements OwnedSceneRepository {
             .param("project", projectId).query((row, index) -> mapSceneObject(projectId, row)).list();
     }
     /** Must persist print_group_id/level_id here (D6): this delete-then-reinsert is the SINGLE writer of
-     * scene_objects, so a side-endpoint would be silently wiped on the next scene save. */
+     * scene_objects, so a side-endpoint would be silently wiped on the next scene save.
+     *
+     * <p>The version {@code UPDATE} runs first, before the delete/insert (ADR-0007 D2): it takes the
+     * {@code projects} row lock, serializing concurrent writers of the same project, and under
+     * {@code READ COMMITTED} PostgreSQL re-evaluates the predicate against the just-committed version once
+     * the lock is released — so a losing concurrent writer sees zero rows and never touches
+     * {@code scene_objects}, rather than a {@code SELECT}-then-update race. */
     @Override @Transactional(isolation = Isolation.READ_COMMITTED)
-    public void replaceScene(UUID projectId, List<SceneObject> objects) {
+    public Optional<Long> replaceScene(UUID projectId, long expectedVersion, List<SceneObject> objects) {
+        var newVersion = jdbc.sql("update projects set scene_version = scene_version + 1 "
+                + "where id=:project and scene_version=:expected returning scene_version")
+            .param("project", projectId).param("expected", expectedVersion).query(Long.class).optional();
+        if (newVersion.isEmpty()) return Optional.empty();
+
         jdbc.sql("delete from scene_objects where project_id=:project").param("project", projectId).update();
         for (SceneObject object : objects) {
             var transform = object.transform();
@@ -63,6 +74,12 @@ public class JdbcOwnedSceneRepository implements OwnedSceneRepository {
                 .param("quaternion", arrayLiteral(transform.quaternionXyzw())).param("scale", arrayLiteral(transform.scale()))
                 .param("matrix", arrayLiteral(matrix)).param("group", object.printGroupId()).param("level", object.levelId()).update();
         }
+        return newVersion;
+    }
+
+    @Override
+    public long findSceneVersion(UUID projectId) {
+        return jdbc.sql("select scene_version from projects where id=:project").param("project", projectId).query(Long.class).single();
     }
 
     private PreparedAsset mapAsset(UUID projectId, ResultSet row) throws SQLException {

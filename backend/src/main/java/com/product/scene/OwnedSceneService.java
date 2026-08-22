@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import com.product.storage.StorageAccessException;
@@ -15,9 +16,19 @@ public class OwnedSceneService {
     private static final double TRANSLATION_EPSILON_MM = 1e-6;
     private final OwnedSceneRepository repository;
     private final StorageResolver storageResolver;
+    private final boolean requireVersion;
+
+    /** Convenience for callers that don't care about ADR-0007's transitional flag; behaves as
+     * {@code app.scene.require-version=false} (the shipped default for this release). */
     public OwnedSceneService(OwnedSceneRepository repository, StorageResolver storageResolver) {
+        this(repository, storageResolver, new SceneProperties(false));
+    }
+
+    @Autowired
+    public OwnedSceneService(OwnedSceneRepository repository, StorageResolver storageResolver, SceneProperties sceneProperties) {
         this.repository = repository;
         this.storageResolver = storageResolver;
+        this.requireVersion = sceneProperties.requireVersion();
     }
     public void createProject(Project project) { repository.save(project); }
     public Project findProject(UUID ownerId, UUID projectId) {
@@ -38,18 +49,33 @@ public class OwnedSceneService {
 
     public SceneDtos.SceneDto loadScene(UUID ownerId, UUID projectId) {
         findProject(ownerId, projectId);
-        return new SceneDtos.SceneDto(repository.findSceneObjects(projectId).stream().map(OwnedSceneService::toDto).toList());
+        return new SceneDtos.SceneDto(repository.findSceneVersion(projectId),
+            repository.findSceneObjects(projectId).stream().map(OwnedSceneService::toDto).toList());
     }
 
-    public void replaceScene(UUID ownerId, UUID projectId, SceneDtos.SceneDto scene) {
-        findProject(ownerId, projectId);
+    public SceneDtos.SceneDto replaceScene(UUID ownerId, UUID projectId, SceneDtos.SceneDto scene) {
+        findProject(ownerId, projectId); // ownership (404) strictly before the version check (409): ADR-0003
         var objects = scene.objects();
         if (objects == null) throw new InvalidSceneException("scene must include an objects list");
         if (objects.size() > MAX_SCENE_OBJECTS) throw new InvalidSceneException("scene exceeds the maximum object count");
         if (objects.stream().map(SceneDtos.SceneObjectDto::id).distinct().count() != objects.size())
             throw new InvalidSceneException("scene object ids must be unique");
         var readyAssetIds = repository.findReadyAssetIds(ownerId);
-        repository.replaceScene(projectId, objects.stream().map(dto -> toDomain(projectId, readyAssetIds, dto)).toList());
+        var domainObjects = objects.stream().map(dto -> toDomain(projectId, readyAssetIds, dto)).toList();
+        long expectedVersion = resolveExpectedVersion(projectId, scene.version());
+        var newVersion = repository.replaceScene(projectId, expectedVersion, domainObjects)
+            .orElseThrow(SceneVersionConflictException::new);
+        return new SceneDtos.SceneDto(newVersion, domainObjects.stream().map(OwnedSceneService::toDto).toList());
+    }
+
+    /** ADR-0007 transitional compatibility: a client that omits {@code version} is either rejected (once
+     * {@code require-version} flips on in PR5) or treated as an unchecked write that always matches the
+     * version it reads right now — the same "no concurrency check" behavior this feature replaces, kept
+     * only for a pre-upgrade client during the release window. */
+    private long resolveExpectedVersion(UUID projectId, Long clientVersion) {
+        if (clientVersion != null) return clientVersion;
+        if (requireVersion) throw new InvalidSceneException("scene version is required");
+        return repository.findSceneVersion(projectId);
     }
 
     private static SceneObject toDomain(UUID projectId, Set<UUID> assetIds, SceneDtos.SceneObjectDto dto) {
