@@ -47,8 +47,14 @@ export interface SceneObjectDto {
 }
 
 export interface SceneDto {
+  // Undefined/omitted on a transitional pre-upgrade save request (bypasses the version check,
+  // ADR-0007); null when the local scene has never been persisted yet.
+  version?: number | null
   objects: SceneObjectDto[]
 }
+
+/** Mirrors the client save-state machine from ADR-0007/design.md. */
+export type SaveState = 'saved' | 'unsaved' | 'saving' | 'retrying' | 'offline' | 'conflict' | 'invalid'
 
 export interface EditorObject {
   id: number
@@ -108,6 +114,9 @@ const INITIAL_STATE = {
   dirty: false,
   loading: false,
   error: null as string | null,
+  sceneVersion: null as number | null,
+  revision: 0,
+  saveState: 'saved' as SaveState,
 }
 
 export interface EditorState {
@@ -122,6 +131,9 @@ export interface EditorState {
   dirty: boolean
   loading: boolean
   error: string | null
+  sceneVersion: number | null
+  revision: number
+  saveState: SaveState
   setAssets: (assets: AssetSummary[]) => void
   upsertAssets: (assets: AssetSummary[]) => void
   insert: (assetId: string) => number
@@ -141,6 +153,9 @@ export interface EditorState {
   assignPrintGroup: (id: number, printGroupId: string | null) => void
   assignLevel: (id: number, levelId: string | null) => void
   removePrintGroup: (groupId: string) => void
+  /** Updates sceneVersion; clears dirty only when the revision has not advanced since the send. */
+  markSaved: (version: number | null, revisionAtSend: number) => void
+  setSaveState: (saveState: SaveState) => void
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
@@ -158,7 +173,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       printGroupId: null,
       levelId: null,
     }
-    set((state) => ({ objects: [...state.objects, created], selectedId: id, dirty: true }))
+    set((state) => ({ objects: [...state.objects, created], selectedId: id, dirty: true, revision: state.revision + 1 }))
     return id
   },
   select: (id) => set({ selectedId: id }),
@@ -173,6 +188,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           : object,
       ),
       dirty: true,
+      revision: state.revision + 1,
     })),
   rotate: (id, quaternionXyzw) =>
     set((state) => ({
@@ -182,15 +198,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
           : object,
       ),
       dirty: true,
+      revision: state.revision + 1,
     })),
   remove: (id) =>
     set((state) => ({
       objects: state.objects.filter((object) => object.id !== id),
       selectedId: state.selectedId === id ? null : state.selectedId,
       dirty: true,
+      revision: state.revision + 1,
     })),
   loadScene: (scene) =>
     set({
+      sceneVersion: scene.version ?? null,
+      revision: 0,
+      saveState: 'saved',
       objects: [...scene.objects]
         .sort((a, b) => a.id - b.id)
         .map((object) => ({
@@ -232,11 +253,13 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((state) => ({
       objects: state.objects.map((object) => (object.id === id ? { ...object, printGroupId } : object)),
       dirty: true,
+      revision: state.revision + 1,
     })),
   assignLevel: (id, levelId) =>
     set((state) => ({
       objects: state.objects.map((object) => (object.id === id ? { ...object, levelId } : object)),
       dirty: true,
+      revision: state.revision + 1,
     })),
   // Atomically removes the group AND clears every object's now-dangling reference to it
   // (CodeRabbit/Codex finding on PR7, #48): the backend clears scene_objects.print_group_id on
@@ -250,7 +273,16 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         object.printGroupId === groupId ? { ...object, printGroupId: null } : object
       ),
       dirty: true,
+      revision: state.revision + 1,
     })),
+  // Called by autosave.ts after a successful PUT; only clears dirty if no edit happened mid-flight
+  // (ADR-0007 revision guard) — an edit that arrives while the request is in flight must survive.
+  markSaved: (version, revisionAtSend) =>
+    set((state) => ({
+      sceneVersion: version ?? state.sceneVersion,
+      dirty: state.revision !== revisionAtSend ? state.dirty : false,
+    })),
+  setSaveState: (saveState) => set({ saveState }),
 }))
 
 export function resetEditorStore(): void {

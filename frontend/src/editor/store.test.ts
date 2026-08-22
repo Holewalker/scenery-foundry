@@ -220,6 +220,66 @@ describe('upsertAssets', () => {
   })
 })
 
+describe('autosave-related store fields (scene_version, revision, save state)', () => {
+  it('bumps a monotonic revision counter on every scene-mutating action', () => {
+    expect(useEditorStore.getState().revision).toBe(0)
+    const id = useEditorStore.getState().insert('asset-1')
+    expect(useEditorStore.getState().revision).toBe(1)
+    useEditorStore.getState().move(id, [1, 2, 3])
+    expect(useEditorStore.getState().revision).toBe(2)
+    useEditorStore.getState().rotate(id, identityQuaternion)
+    expect(useEditorStore.getState().revision).toBe(3)
+    useEditorStore.getState().assignPrintGroup(id, 'group-1')
+    expect(useEditorStore.getState().revision).toBe(4)
+    useEditorStore.getState().assignLevel(id, 'level-1')
+    expect(useEditorStore.getState().revision).toBe(5)
+    useEditorStore.getState().remove(id)
+    expect(useEditorStore.getState().revision).toBe(6)
+  })
+
+  it('loadScene seeds sceneVersion from the incoming scene and resets revision to 0', () => {
+    useEditorStore.getState().loadScene({ version: 7, objects: [] })
+    expect(useEditorStore.getState().sceneVersion).toBe(7)
+    expect(useEditorStore.getState().revision).toBe(0)
+  })
+
+  it('loadScene defaults sceneVersion to null when the scene carries no version field (pre-upgrade server)', () => {
+    useEditorStore.getState().loadScene({ objects: [] })
+    expect(useEditorStore.getState().sceneVersion).toBeNull()
+  })
+
+  it('markSaved updates sceneVersion and clears dirty when the revision has not advanced since the save was sent', () => {
+    useEditorStore.getState().loadScene({ version: 1, objects: [] })
+    const id = useEditorStore.getState().insert('asset-1')
+    const revisionAtSend = useEditorStore.getState().revision
+    expect(useEditorStore.getState().dirty).toBe(true)
+
+    useEditorStore.getState().markSaved(2, revisionAtSend)
+
+    expect(useEditorStore.getState().sceneVersion).toBe(2)
+    expect(useEditorStore.getState().dirty).toBe(false)
+    void id
+  })
+
+  it('markSaved updates sceneVersion but keeps dirty true when the revision advanced during the in-flight save', () => {
+    useEditorStore.getState().loadScene({ version: 1, objects: [] })
+    const revisionAtSend = useEditorStore.getState().revision
+    useEditorStore.getState().insert('asset-1') // edit #1, sent
+    useEditorStore.getState().insert('asset-2') // edit #2, happens mid-flight
+
+    useEditorStore.getState().markSaved(2, revisionAtSend)
+
+    expect(useEditorStore.getState().sceneVersion).toBe(2) // server version still adopted
+    expect(useEditorStore.getState().dirty).toBe(true) // but dirty survives — edit #2 not yet persisted
+  })
+
+  it('setSaveState updates the saveState field directly', () => {
+    expect(useEditorStore.getState().saveState).toBe('saved')
+    useEditorStore.getState().setSaveState('conflict')
+    expect(useEditorStore.getState().saveState).toBe('conflict')
+  })
+})
+
 describe('hasPendingAssets', () => {
   it('reports pending when any asset is still UPLOADED or PROCESSING', () => {
     expect(hasPendingAssets([{ id: 'a', processingStatus: 'UPLOADED' }])).toBe(true)
