@@ -14,7 +14,15 @@ public interface OwnedSceneRepository {
     /** @return the new {@code scene_version}, or empty when another writer already advanced it past
      * {@code expectedVersion} (ADR-0007) — conflict is data at this port boundary, not an exception. */
     Optional<Long> replaceScene(UUID projectId, long expectedVersion, List<SceneObject> objects);
+    /** ADR-0007 transitional unchecked write (Codex PR #52 finding 2): unconditionally advances
+     * {@code scene_version} and replaces {@code scene_objects} for a client that omitted {@code version} —
+     * true last-writer-wins, never comparing against a version read in an earlier separate step, so two
+     * concurrent omitted-version writers never race into a false conflict. */
+    long replaceSceneUnchecked(UUID projectId, List<SceneObject> objects);
     long findSceneVersion(UUID projectId);
+    /** {@code scene_version} and {@code scene_objects} read as one atomic snapshot (Codex PR #52 finding 1) —
+     * no torn read across a concurrent commit landing between two independent queries. */
+    SceneSnapshot findScene(UUID projectId);
     /** Owner's asset ids with processing_status=READY, independent of geometry_status (scene-object eligibility). */
     Set<UUID> findReadyAssetIds(UUID ownerId);
 }

@@ -47,10 +47,14 @@ public class OwnedSceneService {
         return readAssetBytes(asset.storageKey());
     }
 
+    /** Codex PR #52 finding 1: version and objects come from {@link OwnedSceneRepository#findScene} — one
+     * atomic read — so a client that saves back exactly what it just GET-ed can never see an immediate
+     * false {@link SceneVersionConflictException} caused by the GET itself pairing a stale version with
+     * objects a concurrent writer had already committed. */
     public SceneDtos.SceneDto loadScene(UUID ownerId, UUID projectId) {
         findProject(ownerId, projectId);
-        return new SceneDtos.SceneDto(repository.findSceneVersion(projectId),
-            repository.findSceneObjects(projectId).stream().map(OwnedSceneService::toDto).toList());
+        var snapshot = repository.findScene(projectId);
+        return new SceneDtos.SceneDto(snapshot.version(), snapshot.objects().stream().map(OwnedSceneService::toDto).toList());
     }
 
     public SceneDtos.SceneDto replaceScene(UUID ownerId, UUID projectId, SceneDtos.SceneDto scene) {
@@ -62,20 +66,20 @@ public class OwnedSceneService {
             throw new InvalidSceneException("scene object ids must be unique");
         var readyAssetIds = repository.findReadyAssetIds(ownerId);
         var domainObjects = objects.stream().map(dto -> toDomain(projectId, readyAssetIds, dto)).toList();
-        long expectedVersion = resolveExpectedVersion(projectId, scene.version());
-        var newVersion = repository.replaceScene(projectId, expectedVersion, domainObjects)
-            .orElseThrow(SceneVersionConflictException::new);
+        long newVersion = writeScene(projectId, scene.version(), domainObjects);
         return new SceneDtos.SceneDto(newVersion, domainObjects.stream().map(OwnedSceneService::toDto).toList());
     }
 
-    /** ADR-0007 transitional compatibility: a client that omits {@code version} is either rejected (once
-     * {@code require-version} flips on in PR5) or treated as an unchecked write that always matches the
-     * version it reads right now — the same "no concurrency check" behavior this feature replaces, kept
-     * only for a pre-upgrade client during the release window. */
-    private long resolveExpectedVersion(UUID projectId, Long clientVersion) {
-        if (clientVersion != null) return clientVersion;
+    /** ADR-0007 transitional compatibility: a client that supplies {@code version} gets the checked,
+     * conflict-detecting write. A client that omits it is either rejected (once {@code require-version}
+     * flips on in PR5) or gets a genuinely unchecked, last-writer-wins write (Codex PR #52 finding 2): the
+     * repository advances {@code scene_version} unconditionally, never by comparing against a value read in
+     * an earlier separate step — so two concurrent omitted-version writers never race into a false 409. */
+    private long writeScene(UUID projectId, Long clientVersion, List<SceneObject> domainObjects) {
+        if (clientVersion != null)
+            return repository.replaceScene(projectId, clientVersion, domainObjects).orElseThrow(SceneVersionConflictException::new);
         if (requireVersion) throw new InvalidSceneException("scene version is required");
-        return repository.findSceneVersion(projectId);
+        return repository.replaceSceneUnchecked(projectId, domainObjects);
     }
 
     private static SceneObject toDomain(UUID projectId, Set<UUID> assetIds, SceneDtos.SceneObjectDto dto) {

@@ -63,6 +63,31 @@ public class JdbcOwnedSceneRepository implements OwnedSceneRepository {
             .param("project", projectId).param("expected", expectedVersion).query(Long.class).optional();
         if (newVersion.isEmpty()) return Optional.empty();
 
+        writeSceneObjects(projectId, objects);
+        return newVersion;
+    }
+
+    /** Codex PR #52 finding 2: the transitional unchecked write for a client that omitted {@code version}
+     * (ADR-0007). Unlike {@link #replaceScene}, the {@code UPDATE} carries no {@code scene_version}
+     * predicate, so it always affects exactly one row regardless of the value any caller last read — true
+     * last-writer-wins. The row lock it takes still serializes concurrent unchecked writers of the same
+     * project (D2), so both succeed in lock-acquisition order rather than one spuriously losing a
+     * compare-and-swap against a version read moments earlier in a separate step. */
+    @Override @Transactional(isolation = Isolation.READ_COMMITTED)
+    public long replaceSceneUnchecked(UUID projectId, List<SceneObject> objects) {
+        long newVersion = jdbc.sql("update projects set scene_version = scene_version + 1 "
+                + "where id=:project returning scene_version")
+            .param("project", projectId).query(Long.class).single();
+
+        writeSceneObjects(projectId, objects);
+        return newVersion;
+    }
+
+    /** Must persist print_group_id/level_id here (D6): this delete-then-reinsert is the SINGLE writer of
+     * scene_objects, so a side-endpoint would be silently wiped on the next scene save. Shared by both the
+     * checked ({@link #replaceScene}) and unchecked ({@link #replaceSceneUnchecked}) writes: both already
+     * hold the {@code projects} row lock from their version {@code UPDATE} by the time this runs. */
+    private void writeSceneObjects(UUID projectId, List<SceneObject> objects) {
         jdbc.sql("delete from scene_objects where project_id=:project").param("project", projectId).update();
         for (SceneObject object : objects) {
             var transform = object.transform();
@@ -74,12 +99,30 @@ public class JdbcOwnedSceneRepository implements OwnedSceneRepository {
                 .param("quaternion", arrayLiteral(transform.quaternionXyzw())).param("scale", arrayLiteral(transform.scale()))
                 .param("matrix", arrayLiteral(matrix)).param("group", object.printGroupId()).param("level", object.levelId()).update();
         }
-        return newVersion;
     }
 
     @Override
     public long findSceneVersion(UUID projectId) {
         return jdbc.sql("select scene_version from projects where id=:project").param("project", projectId).query(Long.class).single();
+    }
+
+    /** Codex PR #52 finding 1: {@code scene_version} and {@code scene_objects} in ONE statement (a
+     * {@code LEFT JOIN} so a scene with zero objects still returns the project's row), so a single
+     * consistent read snapshot backs both — structurally impossible for a concurrent commit to land between
+     * "read the version" and "read the objects" the way it could with two independent queries. */
+    @Override
+    public SceneSnapshot findScene(UUID projectId) {
+        record Row(long version, SceneObject object) {}
+        var rows = jdbc.sql("select p.scene_version as version, o.id, o.asset_id, o.quaternion_xyzw, o.scale, "
+                + "o.matrix_world_column_major, o.print_group_id, o.level_id "
+                + "from projects p left join scene_objects o on o.project_id = p.id "
+                + "where p.id = :project order by o.id")
+            .param("project", projectId)
+            .query((row, index) -> new Row(row.getLong("version"), row.getObject("id") == null ? null : mapSceneObject(projectId, row)))
+            .list();
+        if (rows.isEmpty()) throw new OwnedResourceNotFoundException();
+        var objects = rows.stream().map(Row::object).filter(java.util.Objects::nonNull).toList();
+        return new SceneSnapshot(rows.get(0).version(), objects);
     }
 
     private PreparedAsset mapAsset(UUID projectId, ResultSet row) throws SQLException {

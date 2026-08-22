@@ -8,7 +8,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -258,6 +263,71 @@ class OwnedSceneServiceTest {
 
         assertThatThrownBy(() -> service.replaceScene(ownerA, projectId, new SceneDtos.SceneDto(List.of(object))))
             .isInstanceOf(InvalidSceneException.class);
+    }
+
+    /** Codex PR #52 finding 1: {@code loadScene} must read {@code scene_version} and {@code scene_objects}
+     * through {@link OwnedSceneRepository#findScene}, ONE atomic call — never two independent calls to
+     * {@code findSceneVersion}/{@code findSceneObjects} that a concurrent commit could straddle, pairing a
+     * stale version with newly committed objects (or vice versa). This repository double fails loudly if
+     * the service reaches for either independent method, making that race structurally impossible rather
+     * than merely untested. */
+    @Test
+    void loadSceneReadsVersionAndObjectsAsOneAtomicSnapshotRatherThanTwoIndependentCallsThatCouldStraddleAConcurrentWrite() {
+        var backing = new InMemoryOwnedSceneRepository();
+        backing.markAssetReady(ownerA, assetId);
+        var repository = new OwnedSceneRepository() {
+            @Override public void save(Project project) { backing.save(project); }
+            @Override public Optional<Project> findProjectByOwner(UUID ownerId, UUID projectId) { return backing.findProjectByOwner(ownerId, projectId); }
+            @Override public List<PreparedAsset> findAssets(UUID projectId) { return backing.findAssets(projectId); }
+            @Override public Optional<PreparedAsset> findAsset(UUID projectId, UUID assetId) { return backing.findAsset(projectId, assetId); }
+            @Override public List<SceneObject> findSceneObjects(UUID projectId) {
+                throw new AssertionError("loadScene must not read scene_objects independently of scene_version (Codex PR #52 finding 1)");
+            }
+            @Override public Optional<Long> replaceScene(UUID projectId, long expectedVersion, List<SceneObject> objects) {
+                return backing.replaceScene(projectId, expectedVersion, objects);
+            }
+            @Override public long replaceSceneUnchecked(UUID projectId, List<SceneObject> objects) {
+                return backing.replaceSceneUnchecked(projectId, objects);
+            }
+            @Override public long findSceneVersion(UUID projectId) {
+                throw new AssertionError("loadScene must not read scene_version independently of scene_objects (Codex PR #52 finding 1)");
+            }
+            @Override public Set<UUID> findReadyAssetIds(UUID ownerId) { return backing.findReadyAssetIds(ownerId); }
+            @Override public SceneSnapshot findScene(UUID projectId) { return backing.findScene(projectId); }
+        };
+        var service = new OwnedSceneService(repository, UNUSED_STORAGE);
+        service.createProject(new Project(projectId, ownerA));
+        var object = new SceneDtos.SceneObjectDto(1, assetId, 1, new double[] {0, 0, 0}, new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}, identity());
+        service.replaceScene(ownerA, projectId, new SceneDtos.SceneDto(List.of(object)));
+
+        var loaded = service.loadScene(ownerA, projectId);
+        assertThat(loaded.version()).isEqualTo(1L);
+        assertThat(loaded.objects()).hasSize(1);
+    }
+
+    /** Codex PR #52 finding 2: with {@code require-version=false}, two clients that BOTH omit {@code version}
+     * must both succeed — true last-writer-wins — never a spurious 409 from comparing against a version
+     * either one separately read moments earlier. */
+    @Test
+    void concurrentOmittedVersionSavesBothSucceedWithTrueLastWriterWinsAndNoFalseConflict() throws Exception {
+        var repository = new InMemoryOwnedSceneRepository();
+        var service = new OwnedSceneService(repository, UNUSED_STORAGE);
+        service.createProject(new Project(projectId, ownerA));
+        repository.markAssetReady(ownerA, assetId);
+        var objectA = new SceneDtos.SceneObjectDto(1, assetId, 1, new double[] {0, 0, 0}, new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}, identity());
+        var objectB = new SceneDtos.SceneObjectDto(2, assetId, 1, new double[] {0, 0, 0}, new double[] {0, 0, 0, 1}, new double[] {1, 1, 1}, identity());
+        var start = new CountDownLatch(1);
+
+        try (var pool = Executors.newFixedThreadPool(2)) {
+            var callA = pool.submit(() -> { start.await(); return service.replaceScene(ownerA, projectId, new SceneDtos.SceneDto(List.of(objectA))); });
+            var callB = pool.submit(() -> { start.await(); return service.replaceScene(ownerA, projectId, new SceneDtos.SceneDto(List.of(objectB))); });
+            start.countDown();
+            var resultA = callA.get(10, TimeUnit.SECONDS); // must not throw SceneVersionConflictException
+            var resultB = callB.get(10, TimeUnit.SECONDS); // must not throw SceneVersionConflictException
+
+            assertThat(Set.of(resultA.version(), resultB.version())).isEqualTo(Set.of(1L, 2L));
+            assertThat(service.loadScene(ownerA, projectId).version()).isEqualTo(2L);
+        }
     }
 
     @Test
