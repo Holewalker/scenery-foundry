@@ -77,6 +77,31 @@ se añade ninguna transacción ni servicio nuevo.
 - **4xx de validación**: se muestra el mensaje y se detiene el autosave; reintentar el mismo
   cuerpo no puede tener éxito.
 
+### Reintento tras respuesta ambigua
+
+Un error de red o 5xx no dice si el `PUT` llegó a aplicarse en el servidor antes de perderse la
+respuesta. Reintentar sin más con el mismo `version` esperado convierte esa ambigüedad en pérdida
+de datos: si el `PUT` original sí se aplicó, el reintento choca contra un `409` que no refleja un
+conflicto real, y el flujo de recuperación (recargar) descarta ediciones locales sin que haya
+habido otro escritor.
+
+Antes de reintentar tras un error de red/5xx, el cliente reconcilia con un `GET` liviano de la
+versión actual:
+
+- Si la versión del servidor sigue siendo la que se envió, el `PUT` no llegó a aplicarse:
+  reintentar sin cambios es seguro.
+- Si la versión del servidor es exactamente la esperada + 1 y la revisión local no cambió desde
+  el envío (`revisionAtSend` sigue vigente), el `PUT` original sí se aplicó: se trata como
+  guardado (`markSaved` con la versión del servidor), sin reintentar ni mostrar conflicto.
+- Si la versión del servidor es la esperada + 1 pero la revisión local **sí** cambió desde el
+  envío (hubo ediciones nuevas mientras la respuesta estaba en vuelo), no es un conflicto externo:
+  se adopta la versión del servidor como nueva base y se reintenta una vez con ella.
+- Cualquier otro valor de versión es un conflicto externo genuino y sigue el flujo `409` normal.
+
+Esta reconciliación es exclusiva del camino red/5xx; un `409` recibido como respuesta directa del
+`PUT` (no de un reintento tras ambigüedad) siempre se trata como conflicto real, porque en ese
+caso el servidor ya comparó la versión enviada contra la vigente en la misma petición.
+
 ## Valores iniciales configurables
 
 | Parámetro | Default inicial | Motivo |
