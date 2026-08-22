@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  ApiError,
   captureCombinedExport,
   createPrintGroup,
   deletePrintGroup,
@@ -120,6 +121,47 @@ describe('api client', () => {
     expect(url).toBe('/api/projects/project-1/scene')
     expect(init.method).toBe('PUT')
     expect(new Headers(init.headers).get('X-CSRF-TOKEN')).toBe('csrf-token-value')
+  })
+
+  it('sends the last-known scene version and returns the server-assigned version on a successful save', async () => {
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ token: 'csrf-token-value', headerName: 'X-CSRF-TOKEN' }))
+      .mockResolvedValueOnce(jsonResponse({ version: 6, objects: [] }))
+
+    const saved = await saveScene('project-1', { version: 5, objects: [] })
+
+    expect(saved).toEqual({ version: 6, objects: [] })
+    const [, init] = fetchMock.mock.calls[1] as [string, RequestInit]
+    expect(JSON.parse(init.body as string)).toEqual({ version: 5, objects: [] })
+  })
+
+  it('throws an ApiError carrying the response status and server error code on a rejected save (e.g. version conflict)', async () => {
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(jsonResponse({ token: 't', headerName: 'X-CSRF-TOKEN' })).mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      json: async () => ({ code: 'SCENE_VERSION_CONFLICT', message: 'stale version' }),
+    } as unknown as Response)
+
+    const error = await saveScene('project-1', { version: 5, objects: [] }).catch((caught: unknown) => caught)
+
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).status).toBe(409)
+    expect((error as ApiError).code).toBe('SCENE_VERSION_CONFLICT')
+  })
+
+  it('throws an ApiError with an undefined code when the error response body has none or is not JSON', async () => {
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ token: 't', headerName: 'X-CSRF-TOKEN' }))
+      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => { throw new Error('not json') } } as unknown as Response)
+
+    const error = await saveScene('project-1', { objects: [] }).catch((caught: unknown) => caught)
+
+    expect(error).toBeInstanceOf(ApiError)
+    expect((error as ApiError).status).toBe(500)
+    expect((error as ApiError).code).toBeUndefined()
   })
 
   it('resolves after a successful login', async () => {
