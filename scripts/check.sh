@@ -84,6 +84,12 @@ for backup_test in "$repo"/scripts/backup/tests/test-*.sh; do
   bash "$backup_test"
 done
 
+# ADR-0008 / Phase 5 (deployment): shell-level test for the Caddyfile's routing and size-limit
+# behavior against a real caddy:2-alpine container (no mocked HTTP layer).
+for deploy_test in "$repo"/scripts/tests/test-*.sh; do
+  bash "$deploy_test"
+done
+
 rm -rf "$repo/backend/target" "$repo/frontend/dist" "$repo/frontend/.vite" \
   "$repo/geometry-worker/.pytest_cache" "$repo/geometry-worker/.ruff_cache"
 
@@ -112,6 +118,13 @@ done
 ( cd "$repo/geometry-worker" && uv sync --locked && uv run ruff check . && uv run ruff format --check . && uv run pytest -q; )
 
 ( cd "$repo" && docker compose --project-name "$project" build && docker compose --project-name "$project" up --wait; )
+
+# Phase 5: `backup` (like `caddy`/`duckdns`) is gated behind `profiles: [prod]` so a plain local
+# `docker compose up` never starts it (ADR-0008 D11). `caddy`/`duckdns` need a real domain/ACME
+# and are intentionally NOT started here; `backup` needs neither, and Compose lets an explicitly
+# named service start regardless of its profile, so it's brought up on its own for the drill
+# below instead of passing `--profile prod` (which would also try to start caddy/duckdns).
+( cd "$repo" && docker compose --project-name "$project" up -d backup; )
 
 # Task 4.9: on-demand backup + real restore-smoke.sh drill against the live stack's own
 # postgres/backup services, not a synthetic harness — proves the actual shipped scripts work

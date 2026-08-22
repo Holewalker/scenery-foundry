@@ -1,0 +1,42 @@
+# ADR-0008: single public edge. Automatic HTTPS via Caddy's built-in ACME/Let's Encrypt against
+# the real domain kept current by the `duckdns` sidecar (D4). Only `caddy` publishes 80/443;
+# `backend`/`frontend` have no published ports (compose.yml) and are reachable only over the
+# Compose network, so `/actuator/*` (not under `/api/*`) is unroutable from the edge even if
+# Spring Security misconfiguration ever exposed it.
+{
+	# Contact address Let's Encrypt uses for expiry/problem notices about the ACME account.
+	# Falls back to a syntactically-valid placeholder if ACME_EMAIL is unset, rather than an
+	# empty argument, which Caddy refuses to start on ("wrong argument count") — confirmed by a
+	# real startup crash during apply when ACME_EMAIL was left unset.
+	email {$ACME_EMAIL:acme-contact-not-configured@localhost}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+	# Must stay >= spring.servlet.multipart.max-request-size (application.yml: 210MB). NOTE THE
+	# UNIT: Spring's DataSize parses "MB" as BINARY (1MB = 1024*1024 = 1,048,576 bytes), so
+	# application.yml's `210MB` is really 220,200,960 bytes. Caddy's max_size parses "MB" as
+	# DECIMAL (1MB = 1,000,000 bytes) via go-humanize, so writing `210MB` here would silently
+	# reject a legitimate ~205 MiB upload the backend would have accepted (confirmed with a real
+	# 205 MiB POST during apply: rejected 413 at `210MB`, accepted at `210MiB`). `MiB` forces the
+	# binary interpretation Caddy also supports, matching Spring's actual byte count exactly.
+	request_body {
+		max_size 210MiB
+	}
+
+	handle /api/* {
+		reverse_proxy backend:8080
+	}
+
+	handle {
+		reverse_proxy frontend:80
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}
