@@ -14,6 +14,7 @@ public final class InMemoryOwnedSceneRepository implements OwnedSceneRepository 
     private final Map<UUID, Project> projects = new HashMap<>();
     private final Map<UUID, List<PreparedAsset>> assets = new HashMap<>();
     private final Map<UUID, List<SceneObject>> scenes = new HashMap<>();
+    private final Map<UUID, Long> sceneVersions = new HashMap<>();
     /** assetId -> owning owner, so {@link #findReadyAssetIds} never leaks a ready asset across owners. */
     private final Map<UUID, UUID> readyAssetOwners = new HashMap<>();
 
@@ -36,7 +37,15 @@ public final class InMemoryOwnedSceneRepository implements OwnedSceneRepository 
     @Override public List<SceneObject> findSceneObjects(UUID projectId) {
         return scenes.getOrDefault(projectId, List.of()).stream().sorted(Comparator.comparing(object -> object.id().value())).toList();
     }
-    @Override public void replaceScene(UUID projectId, List<SceneObject> objects) { scenes.put(projectId, List.copyOf(objects)); }
+    @Override public Optional<Long> replaceScene(UUID projectId, long expectedVersion, List<SceneObject> objects) {
+        long current = sceneVersions.getOrDefault(projectId, 0L);
+        if (current != expectedVersion) return Optional.empty();
+        long next = current + 1;
+        sceneVersions.put(projectId, next);
+        scenes.put(projectId, List.copyOf(objects));
+        return Optional.of(next);
+    }
+    @Override public long findSceneVersion(UUID projectId) { return sceneVersions.getOrDefault(projectId, 0L); }
     @Override public Set<UUID> findReadyAssetIds(UUID ownerId) {
         return readyAssetOwners.entrySet().stream().filter(entry -> entry.getValue().equals(ownerId))
             .map(Map.Entry::getKey).collect(java.util.stream.Collectors.toUnmodifiableSet());
