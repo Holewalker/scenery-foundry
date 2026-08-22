@@ -12,6 +12,8 @@ válido.
 | [0004](0004-snapshot-inmutable-combined-export.md) | Aceptada | Snapshot inmutable para Combined Export |
 | [0005](0005-semantica-de-jobs.md) | Aceptada | Estados, lease, reintentos e idempotencia de jobs |
 | [0006](0006-validez-geometrica.md) | Aceptada | Criterios medibles y diagnósticos geométricos |
+| [0007](0007-concurrencia-de-guardado-de-escena.md) | Aceptada | Concurrencia de guardado de escena y semántica de autosave |
+| [0008](0008-topologia-de-despliegue-y-operacion.md) | Aceptada | Topología de despliegue y operación |
 
 ## Cómo leerlos
 
