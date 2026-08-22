@@ -21,6 +21,13 @@ server:
         http-only: true
         same-site: lax
         secure: ${SESSION_COOKIE_SECURE:true}
+# ADR-0008 D8: Spring Boot 4.1's native structured logging, verified against the shipped
+# spring-configuration-metadata.json and `CommonStructuredLogFormat` (valid ids: ecs/gelf/logstash).
+# Zero new dependencies — no logback-spring.xml/logstash-logback-encoder needed.
+logging:
+  structured:
+    format:
+      console: ecs
 spring.servlet.multipart:
   max-file-size: 205MB
   max-request-size: 210MB
