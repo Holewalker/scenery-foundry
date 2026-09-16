@@ -46,12 +46,7 @@ export function AssetCatalog({ assets }: AssetCatalogProps) {
             : asset.processingStatus
         return (
           <li key={asset.id}>
-            <button
-              type="button"
-              aria-label={asset.id}
-              disabled={!insertable}
-              onClick={() => insertable && insert(asset.id)}
-            >
+            <button type="button" disabled={!insertable} onClick={() => insertable && insert(asset.id)}>
               <span aria-hidden="true" className="asset-icon">
                 <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16">
                   <rect x="2" y="2" width="12" height="12" rx="2" />

@@ -24,7 +24,10 @@ describe('AssetCatalog', () => {
     )
 
     const buttons = screen.getAllByRole('button')
-    expect(buttons.map((button) => button.getAttribute('aria-label'))).toEqual(['asset-a', 'asset-b'])
+    expect(buttons.map((button) => button.querySelector('.asset-name')?.textContent)).toEqual([
+      'Asset asset-a',
+      'Asset asset-b',
+    ])
   })
 
   it('inserts and selects a new object into the store when a READY, previewAvailable asset is chosen', () => {
@@ -34,7 +37,7 @@ describe('AssetCatalog', () => {
       />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'asset-a' }))
+    fireEvent.click(screen.getByRole('button'))
 
     const state = useEditorStore.getState()
     expect(state.objects).toHaveLength(1)
@@ -60,7 +63,7 @@ describe('AssetCatalog', () => {
     expect(icon).not.toBeNull()
     expect(firstButton.querySelector('title')).toBeNull()
     expect(firstButton.querySelector('desc')).toBeNull()
-    expect(firstButton).toHaveAttribute('aria-label', 'asset-a')
+    expect(firstButton).toHaveAccessibleName(/^Asset asset-a/)
   })
 
   it('disables inserting a non-READY asset and still shows it with a status badge', () => {
@@ -70,7 +73,7 @@ describe('AssetCatalog', () => {
       />,
     )
 
-    const button = screen.getByRole('button', { name: 'asset-a' })
+    const button = screen.getByRole('button')
     expect(button).toBeDisabled()
     expect(button).toHaveTextContent('UPLOADED')
 
@@ -89,9 +92,9 @@ describe('AssetCatalog', () => {
       />,
     )
 
-    expect(screen.getByRole('button', { name: 'asset-a' })).toHaveTextContent('READY')
-    expect(screen.getByRole('button', { name: 'asset-b' })).toHaveTextContent('PROCESSING')
-    expect(screen.getByRole('button', { name: 'asset-c' })).toHaveTextContent('FAILED')
+    expect(screen.getByRole('button', { name: /^Asset asset-a/ })).toHaveTextContent('READY')
+    expect(screen.getByRole('button', { name: /^Asset asset-b/ })).toHaveTextContent('PROCESSING')
+    expect(screen.getByRole('button', { name: /^Asset asset-c/ })).toHaveTextContent('FAILED')
   })
 
   it('disables a READY asset with no available preview, and shows an explanatory status distinct from the plain READY badge', () => {
@@ -101,7 +104,7 @@ describe('AssetCatalog', () => {
       />,
     )
 
-    const button = screen.getByRole('button', { name: 'asset-a' })
+    const button = screen.getByRole('button')
     expect(button).toBeDisabled()
     expect(button).toHaveTextContent('READY · no preview available')
 
@@ -136,6 +139,33 @@ describe('AssetCatalog', () => {
     )
 
     expect(screen.getByText('Asset a1b2c3d4')).toBeInTheDocument()
+  })
+
+  // Regression: aria-label={asset.id} used to override the button's accessible name with the raw
+  // UUID even though the visible text already showed the human-readable labelWithFallback value —
+  // a screen reader announced the raw id instead of the label a sighted user sees.
+  it('gives the asset button an accessible name matching the visible label, not the raw asset id, when originalFilename is present', () => {
+    const assetId = 'a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d'
+    render(
+      <AssetCatalog
+        assets={[{ id: assetId, processingStatus: 'READY', previewAvailable: true, originalFilename: 'gear.stl' }]}
+      />,
+    )
+
+    const button = screen.getByRole('button', { name: /^gear\.stl/ })
+    expect(button).not.toHaveAccessibleName(assetId)
+  })
+
+  it('falls back to the short-id label for the accessible name, not the raw asset id, when originalFilename is null', () => {
+    const assetId = 'a1b2c3d4-e5f6-4a5b-8c9d-0e1f2a3b4c5d'
+    render(
+      <AssetCatalog
+        assets={[{ id: assetId, processingStatus: 'READY', previewAvailable: true, originalFilename: null }]}
+      />,
+    )
+
+    const button = screen.getByRole('button', { name: /^Asset a1b2c3d4/ })
+    expect(button).not.toHaveAccessibleName(assetId)
   })
 })
 

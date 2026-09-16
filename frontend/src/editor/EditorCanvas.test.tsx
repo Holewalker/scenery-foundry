@@ -1,5 +1,7 @@
 import { act, render, waitFor } from '@testing-library/react'
-import type { ReactNode } from 'react'
+import { forwardRef } from 'react'
+import type { Ref, ReactNode } from 'react'
+import { PerspectiveCamera, Vector3 } from 'three'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetEditorStore, useEditorStore } from './store'
 import { EditorCanvas } from './EditorCanvas'
@@ -29,14 +31,24 @@ vi.mock('three/examples/jsm/loaders/GLTFLoader.js', () => ({
 
 const orbitSpy = vi.fn()
 const transformSpy = vi.fn()
+// A real PerspectiveCamera/Vector3 pair stands in for R3F's own camera/OrbitControls instances —
+// this harness renders <Canvas>/<group>/<mesh> as plain DOM nodes with no scene graph behind
+// them (see EditorCanvas.tsx's `instanceof Object3D` guard), so the fit effect always treats the
+// scene as empty here and only the default-view branch is exercised through this component.
+const fakeCamera = new PerspectiveCamera(50, 1, 0.1, 10000)
+const fakeControls = { target: new Vector3(), update: vi.fn() }
 vi.mock('@react-three/fiber', () => ({
   Canvas: ({ children }: { children: ReactNode }) => <>{children}</>,
+  useThree: () => ({ camera: fakeCamera }),
 }))
 vi.mock('@react-three/drei', () => ({
-  OrbitControls: (props: Record<string, unknown>) => {
+  Html: ({ children }: { children: ReactNode }) => <>{children}</>,
+  OrbitControls: forwardRef((props: Record<string, unknown>, ref: Ref<typeof fakeControls>) => {
     orbitSpy(props)
+    if (typeof ref === 'function') ref(fakeControls)
+    else if (ref) ref.current = fakeControls
     return null
-  },
+  }),
   TransformControls: (props: { children: ReactNode } & Record<string, unknown>) => {
     transformSpy(props)
     return <>{props.children}</>
@@ -49,6 +61,9 @@ beforeEach(() => {
   orbitSpy.mockReset()
   transformSpy.mockReset()
   parseAsyncSpy.mockClear().mockImplementation((buffer: unknown) => Promise.resolve(fakeGltfScene({ buffer })))
+  fakeCamera.position.set(0, 500, 500)
+  fakeControls.target.set(0, 0, 0)
+  fakeControls.update.mockReset()
 })
 
 // The mocked TransformControls renders the real <mesh> child directly into the DOM (no R3F
@@ -109,6 +124,19 @@ describe('EditorCanvas', () => {
     const { container } = render(<EditorCanvas />)
 
     await waitFor(() => expect(container.querySelector('mesh')).not.toBeNull())
+  })
+
+  it('uses a matte clay material to make model relief visible', async () => {
+    seedPreviewableAsset('asset-1')
+    useEditorStore.getState().insert('asset-1')
+
+    const { container } = render(<EditorCanvas />)
+
+    await waitFor(() => expect(container.querySelector('meshstandardmaterial')).not.toBeNull())
+    const material = container.querySelector('meshstandardmaterial')
+    expect(material).toHaveAttribute('color', '#9b7358')
+    expect(material).toHaveAttribute('roughness', '0.88')
+    expect(material).toHaveAttribute('metalness', '0')
   })
 
   it('never fetches a preview and sets a scoped "no preview available" error when the asset has no preview', async () => {
@@ -301,5 +329,47 @@ describe('EditorCanvas', () => {
     await waitFor(() => expect(useEditorStore.getState().objectGeometryErrors[id]).not.toBeUndefined())
     const mesh = container.querySelector('mesh')
     expect(mesh).not.toBeNull()
+  })
+
+  it('renders an accessible geometry error indicator with a Retry geometry action', async () => {
+    useEditorStore
+      .getState()
+      .setAssets([{ id: 'asset-1', processingStatus: 'READY', previewAvailable: false, originalFilename: null }])
+    const id = useEditorStore.getState().insert('asset-1')
+
+    const { getByRole } = render(<EditorCanvas />)
+
+    await waitFor(() => expect(useEditorStore.getState().objectGeometryErrors[id]).toBeDefined())
+    expect(getByRole('alert')).toHaveTextContent('Geometry unavailable')
+    const retry = getByRole('button', { name: 'Retry geometry' })
+
+    act(() => retry.click())
+    expect(useEditorStore.getState().geometryRetryTick[id]).toBe(1)
+  })
+
+  // This harness has no real R3F scene graph behind its mocked <group> (see the `instanceof
+  // Object3D` guard note above), so it can only exercise the default-view branch of the fit
+  // effect — not framing a real bounding box, which frameBox's own unit tests already cover.
+  it('resets the camera and orbit target to the default view when a fit-to-scene is requested', async () => {
+    render(<EditorCanvas />)
+    await waitFor(() => expect(orbitSpy).toHaveBeenCalled())
+
+    fakeCamera.position.set(123, 456, 789)
+    fakeControls.target.set(1, 2, 3)
+
+    act(() => {
+      useEditorStore.getState().requestFitToScene()
+    })
+
+    expect(fakeCamera.position.toArray()).toEqual([0, 500, 500])
+    expect(fakeControls.target.toArray()).toEqual([0, 0, 0])
+    expect(fakeControls.update).toHaveBeenCalledTimes(1)
+  })
+
+  it('never fits the scene on initial mount, only on an explicit requestFitToScene() call', async () => {
+    render(<EditorCanvas />)
+    await waitFor(() => expect(orbitSpy).toHaveBeenCalled())
+
+    expect(fakeControls.update).not.toHaveBeenCalled()
   })
 })
