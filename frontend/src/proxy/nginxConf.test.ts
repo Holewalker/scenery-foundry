@@ -5,6 +5,10 @@ import { describe, expect, it } from 'vitest'
 const conf = readFileSync(resolve(__dirname, '../../nginx.conf'), 'utf8')
 
 describe('nginx production /api routing', () => {
+  it('allows the backend-aligned upload request size', () => {
+    expect(conf).toMatch(/^\s*client_max_body_size\s+210m;\s*$/m)
+  })
+
   it('proxies the exact /api/ prefix to the backend service, forwarding cookies', () => {
     expect(conf).toMatch(/location\s+\/api\/\s*\{[^}]*proxy_pass\s+http:\/\/backend:8080;/s)
     expect(conf).toMatch(/proxy_set_header\s+Cookie\s+\$http_cookie;/)
