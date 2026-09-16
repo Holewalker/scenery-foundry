@@ -103,10 +103,18 @@ describe('api client', () => {
     const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ token: 't', headerName: 'X-CSRF-TOKEN' }))
-      .mockResolvedValueOnce({ ok: false, status: 413 } as Response)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 413,
+        json: async () => ({ code: 'FILE_TOO_LARGE', message: 'Uploaded file exceeds the maximum allowed size' }),
+      } as unknown as Response)
     const file = new File([new Uint8Array([1])], 'huge.stl')
 
-    await expect(uploadAsset(file)).rejects.toThrow('failed to upload asset')
+    await expect(uploadAsset(file)).rejects.toMatchObject({
+      status: 413,
+      code: 'FILE_TOO_LARGE',
+      message: 'Uploaded file exceeds the maximum allowed size',
+    })
   })
 
   it('attaches the server-provided csrf header to a mutating save request', async () => {

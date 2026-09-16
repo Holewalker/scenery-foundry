@@ -17,12 +17,20 @@ export class ApiError extends Error {
   }
 }
 
-async function readErrorCode(response: Response): Promise<string | undefined> {
+interface ApiErrorDetails {
+  code?: string
+  message?: string
+}
+
+async function readErrorDetails(response: Response): Promise<ApiErrorDetails> {
   try {
-    const body = (await response.json()) as { code?: string }
-    return body.code
+    const body = (await response.json()) as ApiErrorDetails
+    return {
+      code: typeof body.code === 'string' ? body.code : undefined,
+      message: typeof body.message === 'string' ? body.message : undefined,
+    }
   } catch {
-    return undefined
+    return {}
   }
 }
 
@@ -109,7 +117,10 @@ export async function uploadAsset(file: File): Promise<AssetIntakeResult> {
   const body = new FormData()
   body.append('file', file)
   const response = await apiFetch('/api/assets', { method: 'POST', body })
-  if (!response.ok) throw new Error('failed to upload asset')
+  if (!response.ok) {
+    const details = await readErrorDetails(response)
+    throw new ApiError(response.status, details.code, details.message)
+  }
   return response.json() as Promise<AssetIntakeResult>
 }
 
@@ -126,7 +137,8 @@ export async function saveScene(projectId: string, scene: SceneDto): Promise<Sce
     body: JSON.stringify(scene),
   })
   if (!response.ok) {
-    throw new ApiError(response.status, await readErrorCode(response))
+    const details = await readErrorDetails(response)
+    throw new ApiError(response.status, details.code, details.message)
   }
   return response.json() as Promise<SceneDto>
 }
