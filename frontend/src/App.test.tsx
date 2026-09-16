@@ -366,6 +366,14 @@ describe('App', () => {
     expect(useEditorStore.getState().mode).toBe('translate')
   })
 
+  it('bumps the store fit request tick when the Fit model toolbar button is clicked', async () => {
+    await signIn()
+
+    expect(useEditorStore.getState().fitRequestTick).toBe(0)
+    fireEvent.click(screen.getByRole('button', { name: 'Fit model' }))
+    expect(useEditorStore.getState().fitRequestTick).toBe(1)
+  })
+
   it('shows a clean save state in the header before any edit, and reflects unsaved changes after one', async () => {
     await signIn()
 
@@ -382,7 +390,7 @@ describe('App', () => {
   it('augments toolbar buttons with hidden decorative icons without changing their accessible names or text', async () => {
     await signIn()
 
-    for (const name of ['Move', 'Rotate', 'Snap', 'Delete', 'Save']) {
+    for (const name of ['Move', 'Rotate', 'Snap', 'Fit model', 'Delete', 'Save']) {
       const button = screen.getByRole('button', { name })
       const icon = button.querySelector('svg[aria-hidden="true"]')
       expect(icon).not.toBeNull()
@@ -402,6 +410,16 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Start combined export' })).toBeInTheDocument()
   })
 
+  it('shows concise first-steps guidance above the asset upload in the panel', async () => {
+    await signIn()
+
+    const catalogPanel = document.querySelector('aside.panel') as HTMLElement
+    expect(within(catalogPanel).getByText('Select an asset')).toBeInTheDocument()
+    expect(within(catalogPanel).getByText('Place it in the scene')).toBeInTheDocument()
+    expect(within(catalogPanel).getByText('Assign it to a print group')).toBeInTheDocument()
+    expect(within(catalogPanel).getByText('Save or export')).toBeInTheDocument()
+  })
+
   it('places the asset catalog and viewport inside distinct panel containers', async () => {
     await signIn()
 
@@ -410,14 +428,16 @@ describe('App', () => {
 
     expect(catalogPanel).not.toBeNull()
     expect(viewportPanel).not.toBeNull()
-    // Phase 4 wiring added PrintGroupPanel's own (empty) list alongside the asset catalog's.
-    expect(within(catalogPanel as HTMLElement).getAllByRole('list')).toHaveLength(2)
+    // Phase 4 wiring added PrintGroupPanel's own (empty) list alongside the asset catalog's; the
+    // first-steps guidance list adds a third.
+    expect(within(catalogPanel as HTMLElement).getAllByRole('list')).toHaveLength(3)
     expect(within(viewportPanel as HTMLElement).getByTestId('editor-canvas')).toBeInTheDocument()
     expect(screen.getAllByRole('button').map((button) => button.textContent)).toEqual([
       'Create', // PrintGroupPanel's "New print group" form
       'Move',
       'Rotate',
       'Snap',
+      'Fit model',
       'Delete',
       'Save',
     ])

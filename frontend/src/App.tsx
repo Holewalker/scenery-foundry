@@ -10,6 +10,7 @@ import { EditorCanvas } from './editor/EditorCanvas'
 import { PrintGroupPanel } from './editor/PrintGroupPanel'
 import { ProjectPicker } from './editor/ProjectPicker'
 import { SaveStatus } from './editor/SaveStatus'
+import { TransformPanel } from './editor/TransformPanel'
 import { useEditorStore } from './editor/store'
 
 function readProjectId(): string | null {
@@ -37,6 +38,7 @@ export function App() {
   const toggleSnap = useEditorStore((state) => state.toggleSnap)
   const objectGeometryErrors = useEditorStore((state) => state.objectGeometryErrors)
   const retryObjectGeometry = useEditorStore((state) => state.retryObjectGeometry)
+  const requestFitToScene = useEditorStore((state) => state.requestFitToScene)
   const schedulerRef = useRef<AutosaveScheduler | null>(null)
   const selectedGeometryError = selectedId !== null ? (objectGeometryErrors[selectedId] ?? null) : null
 
@@ -195,8 +197,15 @@ export function App() {
       </header>
       <div className="editor-content" inert={backgroundInert}>
         <aside className="panel">
+          <ol className="panel-guidance">
+            <li>Select an asset</li>
+            <li>Place it in the scene</li>
+            <li>Assign it to a print group</li>
+            <li>Save or export</li>
+          </ol>
           <AssetUpload />
           <AssetCatalog assets={assets} />
+          <TransformPanel />
           <PrintGroupPanel projectId={projectId} />
         </aside>
         <section className="viewport">
@@ -221,6 +230,12 @@ export function App() {
               <path d="M1 5h14M1 11h14M5 1v14M11 1v14" />
             </svg>
             Snap
+          </button>
+          <button type="button" onClick={requestFitToScene}>
+            <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16">
+              <path d="M2 5V2h3M11 2h3v3M14 11v3h-3M5 14H2v-3" />
+            </svg>
+            Fit model
           </button>
           <button type="button" className="danger" onClick={handleDelete} disabled={selectedId === null}>
             <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16">

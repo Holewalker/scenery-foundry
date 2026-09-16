@@ -258,6 +258,18 @@ describe('object geometry errors (scoped per object, with a per-object retry tic
   })
 })
 
+describe('fit-to-scene request tick', () => {
+  it('requestFitToScene bumps the fit request tick on every call', () => {
+    expect(useEditorStore.getState().fitRequestTick).toBe(0)
+
+    useEditorStore.getState().requestFitToScene()
+    expect(useEditorStore.getState().fitRequestTick).toBe(1)
+
+    useEditorStore.getState().requestFitToScene()
+    expect(useEditorStore.getState().fitRequestTick).toBe(2)
+  })
+})
+
 describe('autosave-related store fields (scene_version, revision, save state)', () => {
   it('bumps a monotonic revision counter on every scene-mutating action', () => {
     expect(useEditorStore.getState().revision).toBe(0)

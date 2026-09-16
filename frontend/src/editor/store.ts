@@ -126,6 +126,7 @@ const INITIAL_STATE = {
   saveState: 'saved' as SaveState,
   objectGeometryErrors: {} as Record<number, string>,
   geometryRetryTick: {} as Record<number, number>,
+  fitRequestTick: 0,
 }
 
 export interface EditorState {
@@ -145,6 +146,7 @@ export interface EditorState {
   saveState: SaveState
   objectGeometryErrors: Record<number, string>
   geometryRetryTick: Record<number, number>
+  fitRequestTick: number
   setAssets: (assets: AssetSummary[]) => void
   upsertAssets: (assets: AssetSummary[]) => void
   insert: (assetId: string) => number
@@ -154,6 +156,10 @@ export interface EditorState {
   setDragging: (dragging: boolean) => void
   move: (id: number, translationMm: Vec3) => void
   rotate: (id: number, quaternionXyzw: Vec4) => void
+  /** Precise measured edit; unlike drag transforms, this intentionally bypasses snapping. */
+  setTranslation: (id: number, translationMm: Vec3) => void
+  /** Precise measured edit; unlike drag transforms, this intentionally bypasses snapping. */
+  setRotation: (id: number, quaternionXyzw: Vec4) => void
   remove: (id: number) => void
   loadScene: (scene: SceneDto) => void
   toSceneDto: () => SceneDto
@@ -171,6 +177,8 @@ export interface EditorState {
   setObjectGeometryError: (objectId: number, message: string | null) => void
   /** Bumps that object's retry tick so `useObjectGeometry`'s effect (keyed on it) re-runs the fetch. */
   retryObjectGeometry: (objectId: number) => void
+  /** Bumps the fit request tick so EditorCanvas's fit-to-scene effect (keyed on it) re-runs. */
+  requestFitToScene: () => void
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
@@ -215,6 +223,22 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       dirty: true,
       revision: state.revision + 1,
     })),
+  setTranslation: (id, translationMm) => {
+    if (!translationMm.every(Number.isFinite)) return
+    set((state) => ({
+      objects: state.objects.map((object) => (object.id === id ? { ...object, translationMm: [...translationMm] as Vec3 } : object)),
+      dirty: true,
+      revision: state.revision + 1,
+    }))
+  },
+  setRotation: (id, quaternionXyzw) => {
+    if (!quaternionXyzw.every(Number.isFinite)) return
+    set((state) => ({
+      objects: state.objects.map((object) => (object.id === id ? { ...object, quaternionXyzw: [...quaternionXyzw] as Vec4 } : object)),
+      dirty: true,
+      revision: state.revision + 1,
+    }))
+  },
   remove: (id) =>
     set((state) => ({
       objects: state.objects.filter((object) => object.id !== id),
@@ -311,6 +335,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((state) => ({
       geometryRetryTick: { ...state.geometryRetryTick, [objectId]: (state.geometryRetryTick[objectId] ?? 0) + 1 },
     })),
+  requestFitToScene: () => set((state) => ({ fitRequestTick: state.fitRequestTick + 1 })),
 }))
 
 export function resetEditorStore(): void {
