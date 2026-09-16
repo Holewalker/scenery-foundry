@@ -1,3 +1,9 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 :root {
   /* Color */
   --color-surface: #172027;
@@ -159,6 +165,19 @@ main {
   border-right: 1px solid var(--color-border);
   box-shadow: var(--elev-1);
   overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.asset-upload {
+  width: 100%;
+  padding: var(--space-4);
+}
+
+.asset-upload input[type='file'] {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin-top: var(--space-1);
 }
 
 .asset-catalog {

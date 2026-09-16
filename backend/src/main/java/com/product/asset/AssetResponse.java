@@ -9,11 +9,12 @@ import com.product.scene.AssetProcessingStatus;
  * (internal layout with no consumer) — {@code previewStorageKey} is replaced by the one fact the client
  * actually needs from it. */
 public record AssetResponse(UUID id, AssetProcessingStatus processingStatus, AssetGeometryStatus geometryStatus,
-                            Long triangleCount, String errorCode, boolean previewAvailable) {
+                            Long triangleCount, String errorCode, boolean previewAvailable, String originalFilename) {
 
     public static AssetResponse from(AssetCatalogEntry entry) {
         return new AssetResponse(entry.id(), entry.processingStatus(), entry.geometryStatus(),
             entry.triangleCount(), entry.errorCode(),
-            entry.processingStatus() == AssetProcessingStatus.READY && entry.previewStorageKey() != null);
+            entry.processingStatus() == AssetProcessingStatus.READY && entry.previewStorageKey() != null,
+            entry.originalFilename());
     }
 }

@@ -9,6 +9,13 @@ export type AssetProcessingStatus = 'UPLOADED' | 'PROCESSING' | 'READY' | 'FAILE
 export interface AssetSummary {
   id: string
   processingStatus: AssetProcessingStatus
+  previewAvailable: boolean
+  originalFilename: string | null
+}
+
+export interface ProjectSummary {
+  id: string
+  name: string | null
 }
 
 export function hasPendingAssets(assets: AssetSummary[]): boolean {
@@ -117,6 +124,8 @@ const INITIAL_STATE = {
   sceneVersion: null as number | null,
   revision: 0,
   saveState: 'saved' as SaveState,
+  objectGeometryErrors: {} as Record<number, string>,
+  geometryRetryTick: {} as Record<number, number>,
 }
 
 export interface EditorState {
@@ -134,6 +143,8 @@ export interface EditorState {
   sceneVersion: number | null
   revision: number
   saveState: SaveState
+  objectGeometryErrors: Record<number, string>
+  geometryRetryTick: Record<number, number>
   setAssets: (assets: AssetSummary[]) => void
   upsertAssets: (assets: AssetSummary[]) => void
   insert: (assetId: string) => number
@@ -156,6 +167,10 @@ export interface EditorState {
   /** Updates sceneVersion; clears dirty only when the revision has not advanced since the send. */
   markSaved: (version: number | null, revisionAtSend: number) => void
   setSaveState: (saveState: SaveState) => void
+  /** Scoped per-object geometry error (EditorCanvas); `null` removes the entry. Never touches `error`. */
+  setObjectGeometryError: (objectId: number, message: string | null) => void
+  /** Bumps that object's retry tick so `useObjectGeometry`'s effect (keyed on it) re-runs the fetch. */
+  retryObjectGeometry: (objectId: number) => void
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
@@ -283,6 +298,19 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       dirty: state.revision !== revisionAtSend ? state.dirty : false,
     })),
   setSaveState: (saveState) => set({ saveState }),
+  setObjectGeometryError: (objectId, message) =>
+    set((state) => {
+      if (message === null) {
+        if (!(objectId in state.objectGeometryErrors)) return {}
+        const { [objectId]: _removed, ...rest } = state.objectGeometryErrors
+        return { objectGeometryErrors: rest }
+      }
+      return { objectGeometryErrors: { ...state.objectGeometryErrors, [objectId]: message } }
+    }),
+  retryObjectGeometry: (objectId) =>
+    set((state) => ({
+      geometryRetryTick: { ...state.geometryRetryTick, [objectId]: (state.geometryRetryTick[objectId] ?? 0) + 1 },
+    })),
 }))
 
 export function resetEditorStore(): void {

@@ -35,7 +35,9 @@ describe('AssetUpload', () => {
     fireEvent.change(screen.getByLabelText('Upload STL'), { target: { files: [selectedFile()] } })
 
     await waitFor(() =>
-      expect(useEditorStore.getState().assets).toEqual([{ id: 'asset-new', processingStatus: 'UPLOADED' }]),
+      expect(useEditorStore.getState().assets).toEqual([
+        { id: 'asset-new', processingStatus: 'UPLOADED', previewAvailable: false, originalFilename: 'part.stl' },
+      ]),
     )
   })
 
@@ -72,7 +74,9 @@ describe('AssetUpload', () => {
     // A concurrent poll (AssetCatalog's effect) applies a status update for an unrelated
     // asset while this upload's request is still in flight — this must NOT be lost.
     act(() => {
-      useEditorStore.getState().upsertAssets([{ id: 'asset-from-poll', processingStatus: 'READY' }])
+      useEditorStore.getState().upsertAssets([
+        { id: 'asset-from-poll', processingStatus: 'READY', previewAvailable: true, originalFilename: null },
+      ])
     })
 
     act(() => {
@@ -82,8 +86,8 @@ describe('AssetUpload', () => {
     await waitFor(() =>
       expect(useEditorStore.getState().assets).toEqual(
         expect.arrayContaining([
-          { id: 'asset-from-poll', processingStatus: 'READY' },
-          { id: 'asset-new', processingStatus: 'UPLOADED' },
+          { id: 'asset-from-poll', processingStatus: 'READY', previewAvailable: true, originalFilename: null },
+          { id: 'asset-new', processingStatus: 'UPLOADED', previewAvailable: false, originalFilename: 'part.stl' },
         ]),
       ),
     )

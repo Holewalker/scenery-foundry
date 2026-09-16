@@ -16,7 +16,17 @@ export function AssetUpload() {
       const result = await uploadAsset(file)
       // Merge by id instead of replacing from a closed-over snapshot: the poll effect may have
       // applied catalog updates while this upload was in flight, and those must not be dropped.
-      upsertAssets([{ id: result.assetId, processingStatus: result.processingStatus }])
+      // previewAvailable is always false immediately after upload (no preview yet); originalFilename
+      // is known client-side from the File object, so it's shown right away instead of waiting for
+      // the next poll to backfill it.
+      upsertAssets([
+        {
+          id: result.assetId,
+          processingStatus: result.processingStatus,
+          previewAvailable: false,
+          originalFilename: file.name,
+        },
+      ])
       setStatus(result.processingStatus)
     } catch {
       setStatus('Upload failed')

@@ -33,6 +33,9 @@ vi.mock('./api/client', async (importOriginal) => {
 vi.mock('./editor/EditorCanvas', () => ({
   EditorCanvas: () => <div data-testid="editor-canvas" />,
 }))
+vi.mock('./editor/ProjectPicker', () => ({
+  ProjectPicker: () => <div data-testid="project-picker" />,
+}))
 
 import { ApiError } from './api/client'
 import { App } from './App'
@@ -79,6 +82,20 @@ describe('App', () => {
     expect(within(card).getByLabelText('Email')).toBeInTheDocument()
     expect(within(card).getByLabelText('Password')).toBeInTheDocument()
     expect(within(card).getByRole('button', { name: 'Sign in' })).toBeInTheDocument()
+  })
+
+  it('shows the project picker instead of the editor when authenticated with no ?project= in the URL', async () => {
+    window.history.replaceState({}, '', '/')
+    loginMock.mockResolvedValue(undefined)
+    render(<App />)
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'owner@example.com' } })
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }))
+
+    await waitFor(() => expect(screen.getByTestId('project-picker')).toBeInTheDocument())
+    expect(screen.queryByTestId('editor-canvas')).not.toBeInTheDocument()
+    expect(fetchAssetsMock).not.toHaveBeenCalled()
   })
 
   it('loads the project catalog and scene and shows the editor after a successful login', async () => {
@@ -215,6 +232,36 @@ describe('App', () => {
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Save failed'))
     expect(screen.getAllByRole('alert')).toHaveLength(1)
     expect(screen.getByRole('alert')).toHaveTextContent(/could not be saved/i)
+  })
+
+  // Step 3: geometry failures are now scoped per object (EditorCanvas/store.objectGeometryErrors)
+  // instead of the old generic global-banner text — this proves the new path and that the global
+  // `error`/role="alert" banner is never touched by it.
+  it('shows a scoped geometry error with a Retry control for the selected object, and leaves the global error banner untouched', async () => {
+    await signIn()
+    act(() => {
+      useEditorStore.getState().insert('asset-a')
+    })
+    const selectedId = useEditorStore.getState().selectedId as number
+
+    act(() => {
+      useEditorStore.getState().setObjectGeometryError(selectedId, 'Failed to load object geometry.')
+    })
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Failed to load object geometry.')
+    expect(useEditorStore.getState().error).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(useEditorStore.getState().geometryRetryTick[selectedId]).toBe(1)
+  })
+
+  it('never shows a Retry control when the selected object has no geometry error', async () => {
+    await signIn()
+    act(() => {
+      useEditorStore.getState().insert('asset-a')
+    })
+
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
   })
 
   it('on a 409 conflict, renders a prominent alertdialog with only a reload action; reload refetches the scene and resumes normal saving', async () => {

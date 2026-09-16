@@ -42,4 +42,22 @@ class AssetCatalogEntryTest {
         assertThatThrownBy(() -> new AssetCatalogEntry(UUID.randomUUID(), null, AssetProcessingStatus.UPLOADED,
             AssetGeometryStatus.UNKNOWN, null, null, null, null, null)).isInstanceOf(IllegalArgumentException.class);
     }
+
+    @Test
+    void carriesTheOriginalFilenameWhenConstructedWithTheTenArgumentForm() {
+        UUID id = UUID.randomUUID();
+        var entry = new AssetCatalogEntry(id, UUID.randomUUID(), AssetProcessingStatus.READY,
+            AssetGeometryStatus.VALID_VOLUME, "assets/a.stl", "a".repeat(64), null, null, null, "cube.stl");
+
+        assertThat(entry.originalFilename()).isEqualTo("cube.stl");
+    }
+
+    @Test
+    void defaultsOriginalFilenameToNullWithTheLegacyNineArgumentForm() {
+        UUID id = UUID.randomUUID();
+        var entry = new AssetCatalogEntry(id, UUID.randomUUID(), AssetProcessingStatus.READY,
+            AssetGeometryStatus.VALID_VOLUME, "assets/a.stl", "a".repeat(64), null, null, null);
+
+        assertThat(entry.originalFilename()).isNull();
+    }
 }

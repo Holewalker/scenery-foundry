@@ -38,6 +38,42 @@ class OwnedSceneServiceTest {
     }
 
     @Test
+    void createProjectWithANameGeneratesAnIdAndPersistsTheNamedProject() {
+        var service = new OwnedSceneService(new InMemoryOwnedSceneRepository(), UNUSED_STORAGE);
+
+        var created = service.createProject(ownerA, "My Scene");
+
+        assertThat(created.id()).isNotNull();
+        assertThat(created.ownerId()).isEqualTo(ownerA);
+        assertThat(created.name()).isEqualTo("My Scene");
+        assertThat(service.findProject(ownerA, created.id())).isEqualTo(created);
+    }
+
+    @Test
+    void createProjectRejectsABlankOrMissingName() {
+        var service = new OwnedSceneService(new InMemoryOwnedSceneRepository(), UNUSED_STORAGE);
+
+        assertThatThrownBy(() -> service.createProject(ownerA, "   ")).isInstanceOf(InvalidSceneException.class);
+        assertThatThrownBy(() -> service.createProject(ownerA, null)).isInstanceOf(InvalidSceneException.class);
+    }
+
+    @Test
+    void listProjectsReturnsOnlyTheOwnersProjectsSortedByIdAndEmptyWhenNone() {
+        var repository = new InMemoryOwnedSceneRepository();
+        var service = new OwnedSceneService(repository, UNUSED_STORAGE);
+
+        assertThat(service.listProjects(ownerA)).isEmpty();
+
+        var first = service.createProject(ownerA, "First");
+        var second = service.createProject(ownerA, "Second");
+        service.createProject(ownerB, "Someone else's");
+
+        var expectedOrder = java.util.stream.Stream.of(first, second)
+            .sorted(java.util.Comparator.comparing(Project::id)).toList();
+        assertThat(service.listProjects(ownerA)).containsExactlyElementsOf(expectedOrder);
+    }
+
+    @Test
     void acceptsSafeSceneObjectIdBoundariesAndRejectsValuesOutsideThem() {
         assertThat(SceneObjectId.of(1).value()).isEqualTo(1);
         assertThat(SceneObjectId.of(9_007_199_254_740_991L).value()).isEqualTo(9_007_199_254_740_991L);
@@ -278,6 +314,7 @@ class OwnedSceneServiceTest {
         var repository = new OwnedSceneRepository() {
             @Override public void save(Project project) { backing.save(project); }
             @Override public Optional<Project> findProjectByOwner(UUID ownerId, UUID projectId) { return backing.findProjectByOwner(ownerId, projectId); }
+            @Override public List<Project> findProjectsByOwner(UUID ownerId) { return backing.findProjectsByOwner(ownerId); }
             @Override public List<PreparedAsset> findAssets(UUID projectId) { return backing.findAssets(projectId); }
             @Override public Optional<PreparedAsset> findAsset(UUID projectId, UUID assetId) { return backing.findAsset(projectId, assetId); }
             @Override public List<SceneObject> findSceneObjects(UUID projectId) {

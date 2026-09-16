@@ -18,10 +18,24 @@ function firstMeshGeometry(root: Object3D): BufferGeometry | null {
   return found ? (found as Mesh).geometry : null
 }
 
-function useObjectGeometry(assetId: string): BufferGeometry | null {
+// Errors are scoped per object (store.objectGeometryErrors), never the global `error` field: one
+// broken object must never blank out the whole editor with a banner that never clears itself when
+// that object later recovers. `retryTick` (bumped by store.retryObjectGeometry) is in the effect's
+// deps purely to force a re-run — its value itself is never read.
+function useObjectGeometry(assetId: string, objectId: number): BufferGeometry | null {
   const [geometry, setGeometry] = useState<BufferGeometry | null>(null)
-  const setError = useEditorStore((state) => state.setError)
+  const setObjectGeometryError = useEditorStore((state) => state.setObjectGeometryError)
+  const previewAvailable = useEditorStore(
+    (state) => state.assets.find((asset) => asset.id === assetId)?.previewAvailable === true,
+  )
+  const retryTick = useEditorStore((state) => state.geometryRetryTick[objectId] ?? 0)
+
   useEffect(() => {
+    if (!previewAvailable) {
+      setGeometry(null)
+      setObjectGeometryError(objectId, 'No preview available for this object.')
+      return
+    }
     let cancelled = false
     fetchAssetPreview(assetId)
       .then((buffer) => new GLTFLoader().parseAsync(buffer, ''))
@@ -30,14 +44,15 @@ function useObjectGeometry(assetId: string): BufferGeometry | null {
         const meshGeometry = firstMeshGeometry(gltf.scene)
         if (!meshGeometry) throw new Error('preview.glb scene graph contains no mesh')
         setGeometry(meshGeometry)
+        setObjectGeometryError(objectId, null)
       })
       .catch(() => {
-        if (!cancelled) setError('Failed to load object geometry.')
+        if (!cancelled) setObjectGeometryError(objectId, 'Failed to load object geometry.')
       })
     return () => {
       cancelled = true
     }
-  }, [assetId, setError])
+  }, [assetId, objectId, previewAvailable, retryTick, setObjectGeometryError])
   return geometry
 }
 
@@ -49,7 +64,8 @@ function useObjectGeometry(assetId: string): BufferGeometry | null {
 // three-stdlib controls — clearing its tracked drag axis mid-gesture and, since that axis also
 // gates the mouseUp dispatch, intermittently leaving orbit controls disabled after mouseup.
 const EditorObjectMesh = memo(function EditorObjectMesh({ object }: { object: EditorObject }) {
-  const geometry = useObjectGeometry(object.assetId)
+  const geometry = useObjectGeometry(object.assetId, object.id)
+  const geometryError = useEditorStore((state) => state.objectGeometryErrors[object.id] ?? null)
   const meshRef = useRef<Mesh>(null)
   const selectedId = useEditorStore((state) => state.selectedId)
   const mode = useEditorStore((state) => state.mode)
@@ -58,7 +74,22 @@ const EditorObjectMesh = memo(function EditorObjectMesh({ object }: { object: Ed
   const rotate = useEditorStore((state) => state.rotate)
   const setDragging = useEditorStore((state) => state.setDragging)
 
-  if (!geometry) return null
+  if (!geometry) {
+    // Broken objects stay locatable and selectable (a small wireframe box at the object's own
+    // transform) instead of rendering nothing — the user needs to find it to hit Retry.
+    if (!geometryError) return null
+    return (
+      <mesh
+        position={object.translationMm}
+        quaternion={object.quaternionXyzw}
+        scale={object.scale}
+        onClick={() => select(object.id)}
+      >
+        <boxGeometry args={[50, 50, 50]} />
+        <meshBasicMaterial wireframe color="#e2685c" />
+      </mesh>
+    )
+  }
 
   const mesh = (
     <mesh

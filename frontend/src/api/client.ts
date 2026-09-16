@@ -1,4 +1,4 @@
-import type { AssetSummary, PrintGroupSummary, SceneDto } from '../editor/store'
+import type { AssetSummary, PrintGroupSummary, ProjectSummary, SceneDto } from '../editor/store'
 
 /**
  * Thrown by `saveScene` (ADR-0007) so callers — chiefly `autosave.ts` — can branch on the HTTP
@@ -69,6 +69,22 @@ export async function login(email: string, password: string): Promise<void> {
     body: JSON.stringify({ email, password }),
   })
   if (!response.ok) throw new Error('login failed')
+}
+
+export async function fetchProjects(): Promise<ProjectSummary[]> {
+  const response = await apiFetch('/api/projects')
+  if (!response.ok) throw new Error('failed to fetch projects')
+  return response.json() as Promise<ProjectSummary[]>
+}
+
+export async function createProject(name: string): Promise<ProjectSummary> {
+  const response = await apiFetch('/api/projects', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
+  if (!response.ok) throw new Error('failed to create project')
+  return response.json() as Promise<ProjectSummary>
 }
 
 export async function fetchAssets(): Promise<AssetSummary[]> {

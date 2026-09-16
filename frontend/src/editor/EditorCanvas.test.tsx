@@ -68,10 +68,18 @@ function stubMeshTransform(
   meshEl.quaternion = { toArray: () => quaternion }
 }
 
+/** Seeds a single READY, previewAvailable asset — the precondition for a fetch to be attempted. */
+function seedPreviewableAsset(id: string) {
+  useEditorStore
+    .getState()
+    .setAssets([{ id, processingStatus: 'READY', previewAvailable: true, originalFilename: null }])
+}
+
 describe('EditorCanvas', () => {
   it('fetches the published GLB preview for a scene object and parses the exact fetched bytes for rendering', async () => {
     const buffer = new ArrayBuffer(8)
     fetchAssetPreviewMock.mockResolvedValue(buffer)
+    seedPreviewableAsset('asset-1')
     useEditorStore.getState().insert('asset-1')
 
     render(<EditorCanvas />)
@@ -81,6 +89,7 @@ describe('EditorCanvas', () => {
   })
 
   it('never fetches the raw original.stl bytes for viewport rendering', async () => {
+    seedPreviewableAsset('asset-1')
     useEditorStore.getState().insert('asset-1')
 
     render(<EditorCanvas />)
@@ -94,6 +103,7 @@ describe('EditorCanvas', () => {
   it('extracts the first Mesh geometry out of the parsed GLTF scene graph', async () => {
     const geometry = { isBufferGeometry: true }
     parseAsyncSpy.mockResolvedValueOnce(fakeGltfScene(geometry))
+    seedPreviewableAsset('asset-1')
     useEditorStore.getState().insert('asset-1')
 
     const { container } = render(<EditorCanvas />)
@@ -101,26 +111,92 @@ describe('EditorCanvas', () => {
     await waitFor(() => expect(container.querySelector('mesh')).not.toBeNull())
   })
 
-  it('routes a rejected preview fetch into the editor error state instead of an unhandled rejection', async () => {
-    fetchAssetPreviewMock.mockRejectedValue(new Error('network down'))
-    useEditorStore.getState().insert('asset-1')
+  it('never fetches a preview and sets a scoped "no preview available" error when the asset has no preview', async () => {
+    useEditorStore
+      .getState()
+      .setAssets([{ id: 'asset-1', processingStatus: 'READY', previewAvailable: false, originalFilename: null }])
+    const id = useEditorStore.getState().insert('asset-1')
 
     render(<EditorCanvas />)
 
-    await waitFor(() => expect(useEditorStore.getState().error).not.toBeNull())
-    expect(parseAsyncSpy).not.toHaveBeenCalled()
+    await waitFor(() =>
+      expect(useEditorStore.getState().objectGeometryErrors[id]).toBe('No preview available for this object.'),
+    )
+    expect(fetchAssetPreviewMock).not.toHaveBeenCalled()
+    expect(useEditorStore.getState().error).toBeNull()
   })
 
-  it('routes a GLTFLoader.parseAsync failure into the editor error state', async () => {
-    parseAsyncSpy.mockRejectedValueOnce(new Error('malformed glb'))
-    useEditorStore.getState().insert('asset-1')
+  it('never fetches a preview and sets a scoped error when the object references an asset not present in the catalog', async () => {
+    const id = useEditorStore.getState().insert('asset-unknown')
 
     render(<EditorCanvas />)
 
-    await waitFor(() => expect(useEditorStore.getState().error).not.toBeNull())
+    await waitFor(() => expect(useEditorStore.getState().objectGeometryErrors[id]).not.toBeUndefined())
+    expect(fetchAssetPreviewMock).not.toHaveBeenCalled()
+    expect(useEditorStore.getState().error).toBeNull()
+  })
+
+  it('sets only that object\'s scoped error on a rejected preview fetch, never the global error', async () => {
+    fetchAssetPreviewMock.mockRejectedValue(new Error('network down'))
+    seedPreviewableAsset('asset-1')
+    const id = useEditorStore.getState().insert('asset-1')
+
+    render(<EditorCanvas />)
+
+    await waitFor(() => expect(useEditorStore.getState().objectGeometryErrors[id]).toBe('Failed to load object geometry.'))
+    expect(parseAsyncSpy).not.toHaveBeenCalled()
+    expect(useEditorStore.getState().error).toBeNull()
+  })
+
+  it('sets only that object\'s scoped error on a GLTFLoader.parseAsync failure, never the global error', async () => {
+    parseAsyncSpy.mockRejectedValueOnce(new Error('malformed glb'))
+    seedPreviewableAsset('asset-1')
+    const id = useEditorStore.getState().insert('asset-1')
+
+    render(<EditorCanvas />)
+
+    await waitFor(() => expect(useEditorStore.getState().objectGeometryErrors[id]).toBe('Failed to load object geometry.'))
+    expect(useEditorStore.getState().error).toBeNull()
+  })
+
+  it('scopes a failure to only the failing object when one of two objects fails and the other succeeds', async () => {
+    useEditorStore.getState().setAssets([
+      { id: 'asset-good', processingStatus: 'READY', previewAvailable: true, originalFilename: null },
+      { id: 'asset-bad', processingStatus: 'READY', previewAvailable: true, originalFilename: null },
+    ])
+    fetchAssetPreviewMock.mockImplementation((assetId: string) =>
+      assetId === 'asset-bad' ? Promise.reject(new Error('boom')) : Promise.resolve(new ArrayBuffer(0)),
+    )
+    const goodId = useEditorStore.getState().insert('asset-good')
+    const badId = useEditorStore.getState().insert('asset-bad')
+
+    render(<EditorCanvas />)
+
+    await waitFor(() => expect(useEditorStore.getState().objectGeometryErrors[badId]).toBe('Failed to load object geometry.'))
+    expect(useEditorStore.getState().objectGeometryErrors[goodId]).toBeUndefined()
+    expect(useEditorStore.getState().error).toBeNull()
+  })
+
+  it('clears a scoped error once a later retry succeeds', async () => {
+    fetchAssetPreviewMock.mockRejectedValueOnce(new Error('network down'))
+    seedPreviewableAsset('asset-1')
+    const id = useEditorStore.getState().insert('asset-1')
+
+    render(<EditorCanvas />)
+
+    await waitFor(() => expect(useEditorStore.getState().objectGeometryErrors[id]).toBe('Failed to load object geometry.'))
+
+    fetchAssetPreviewMock.mockResolvedValueOnce(new ArrayBuffer(8))
+    act(() => {
+      useEditorStore.getState().retryObjectGeometry(id)
+    })
+
+    await waitFor(() => expect(useEditorStore.getState().objectGeometryErrors[id]).toBeUndefined())
+    expect(useEditorStore.getState().error).toBeNull()
   })
 
   it('disables orbit controls while a transform control drag is active, and restores it after', async () => {
+    seedPreviewableAsset('asset-1')
     const id = useEditorStore.getState().insert('asset-1')
     useEditorStore.getState().select(id)
 
@@ -137,6 +213,7 @@ describe('EditorCanvas', () => {
   })
 
   it('defers committing the dragged transform to the store until the drag ends, never on an intermediate change', async () => {
+    seedPreviewableAsset('asset-1')
     const id = useEditorStore.getState().insert('asset-1')
     useEditorStore.getState().select(id)
 
@@ -163,6 +240,7 @@ describe('EditorCanvas', () => {
   })
 
   it('adds a decorative grid to the viewport without introducing an extra ground mesh', async () => {
+    seedPreviewableAsset('asset-1')
     const id = useEditorStore.getState().insert('asset-1')
     useEditorStore.getState().select(id)
 
@@ -181,6 +259,7 @@ describe('EditorCanvas', () => {
     // parent EditorCanvas re-executes it and gives `mesh` a new element identity, even when
     // neither `object` nor `selectedId`/`mode` changed. `onMouseDown` itself triggers exactly
     // such an unrelated re-render by flipping `orbitEnabled`, which EditorCanvas subscribes to.
+    seedPreviewableAsset('asset-1')
     const id = useEditorStore.getState().insert('asset-1')
     useEditorStore.getState().select(id)
 
@@ -199,6 +278,7 @@ describe('EditorCanvas', () => {
   })
 
   it('wires the active transform control mode to the store transform mode', async () => {
+    seedPreviewableAsset('asset-1')
     const id = useEditorStore.getState().insert('asset-1')
     useEditorStore.getState().select(id)
     useEditorStore.getState().setMode('rotate')
@@ -208,5 +288,18 @@ describe('EditorCanvas', () => {
 
     const props = transformSpy.mock.calls.at(-1)?.[0] as { mode: string }
     expect(props.mode).toBe('rotate')
+  })
+
+  it('renders a locatable, clickable placeholder mesh for an object with a geometry error instead of nothing', async () => {
+    useEditorStore
+      .getState()
+      .setAssets([{ id: 'asset-1', processingStatus: 'READY', previewAvailable: false, originalFilename: null }])
+    const id = useEditorStore.getState().insert('asset-1')
+
+    const { container } = render(<EditorCanvas />)
+
+    await waitFor(() => expect(useEditorStore.getState().objectGeometryErrors[id]).not.toBeUndefined())
+    const mesh = container.querySelector('mesh')
+    expect(mesh).not.toBeNull()
   })
 })

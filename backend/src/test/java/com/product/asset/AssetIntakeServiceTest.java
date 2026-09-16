@@ -64,6 +64,17 @@ class AssetIntakeServiceTest {
     }
 
     @Test
+    void persistsTheOriginalFilenameOnIntake() {
+        var owner = insertUser();
+        var file = new MockMultipartFile("file", "cube.stl", "application/octet-stream", "solid cube\nendsolid cube".getBytes());
+
+        var result = service.intake(owner, file);
+
+        assertThat(jdbc.sql("select original_filename from assets where id=:id and owner_id=:owner")
+            .param("id", result.assetId()).param("owner", owner).query(String.class).single()).isEqualTo("cube.stl");
+    }
+
+    @Test
     void rejectsOversizedOrNonStlUploadsBeforeTouchingStorageOrTheDatabase() {
         var owner = insertUser();
         MultipartFile huge = mock(MultipartFile.class);

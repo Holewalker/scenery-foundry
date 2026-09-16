@@ -64,6 +64,29 @@ class JdbcAssetRepositoryTest {
         assertThat(repository.findByOwnerAndId(owner, UUID.randomUUID())).isEmpty();
     }
 
+    /** Task V9: original_filename round-trips through Postgres, and a legacy row with no filename still maps cleanly. */
+    @Test
+    void roundTripsTheOriginalFilenameAndToleratesALegacyNullFilename() {
+        var owner = insertUser();
+        var namedAssetId = insertAssetWithFilename(owner, "cube.stl");
+        var legacyAssetId = insertAsset(owner, "READY", "VALID_VOLUME");
+
+        assertThat(repository.findByOwnerAndId(owner, namedAssetId)).isPresent()
+            .get().extracting(AssetCatalogEntry::originalFilename).isEqualTo("cube.stl");
+        assertThat(repository.findByOwnerAndId(owner, legacyAssetId)).isPresent()
+            .get().extracting(AssetCatalogEntry::originalFilename).isNull();
+        assertThat(repository.findCatalogForOwner(owner)).extracting(AssetCatalogEntry::originalFilename)
+            .containsExactlyInAnyOrder("cube.stl", null);
+    }
+
+    private UUID insertAssetWithFilename(UUID owner, String filename) {
+        UUID id = UUID.randomUUID();
+        jdbc.sql("insert into assets(id,owner_id,processing_status,geometry_status,storage_key,original_sha256,original_filename) "
+                + "values (:id,:owner,'READY','VALID_VOLUME','assets/a.stl','" + "a".repeat(64) + "',:filename)")
+            .param("id", id).param("owner", owner).param("filename", filename).update();
+        return id;
+    }
+
     private UUID insertUser() {
         var id = UUID.randomUUID();
         jdbc.sql("insert into users(id,email,password_hash) values (:id,:email,'hash')")

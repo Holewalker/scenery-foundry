@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { fetchAssets } from '../api/client'
+import { labelWithFallback } from './identity'
 import type { AssetSummary } from './store'
 import { hasPendingAssets, useEditorStore } from './store'
 
@@ -36,18 +37,29 @@ export function AssetCatalog({ assets }: AssetCatalogProps) {
   return (
     <ul className="asset-catalog">
       {assets.map((asset) => {
-        const ready = asset.processingStatus === 'READY'
+        // A READY asset can still have no preview (e.g. a legacy row seeded before preview
+        // generation existed) — gate insertion on previewAvailable, not just processingStatus.
+        const insertable = asset.processingStatus === 'READY' && asset.previewAvailable
+        const statusLabel =
+          asset.processingStatus === 'READY' && !asset.previewAvailable
+            ? 'READY · no preview available'
+            : asset.processingStatus
         return (
           <li key={asset.id}>
-            <button type="button" aria-label={asset.id} disabled={!ready} onClick={() => ready && insert(asset.id)}>
+            <button
+              type="button"
+              aria-label={asset.id}
+              disabled={!insertable}
+              onClick={() => insertable && insert(asset.id)}
+            >
               <span aria-hidden="true" className="asset-icon">
                 <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16">
                   <rect x="2" y="2" width="12" height="12" rx="2" />
                 </svg>
               </span>
-              <span className="asset-name">{asset.id}</span>
+              <span className="asset-name">{labelWithFallback(asset.originalFilename, asset.id, 'Asset')}</span>
               <span className="asset-status" data-status={asset.processingStatus}>
-                {asset.processingStatus}
+                {statusLabel}
               </span>
             </button>
           </li>

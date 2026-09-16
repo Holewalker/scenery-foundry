@@ -8,6 +8,7 @@ import type { AutosaveScheduler } from './editor/autosave'
 import { createAutosaveScheduler } from './editor/autosave'
 import { EditorCanvas } from './editor/EditorCanvas'
 import { PrintGroupPanel } from './editor/PrintGroupPanel'
+import { ProjectPicker } from './editor/ProjectPicker'
 import { SaveStatus } from './editor/SaveStatus'
 import { useEditorStore } from './editor/store'
 
@@ -34,7 +35,10 @@ export function App() {
   const remove = useEditorStore((state) => state.remove)
   const snapEnabled = useEditorStore((state) => state.snapEnabled)
   const toggleSnap = useEditorStore((state) => state.toggleSnap)
+  const objectGeometryErrors = useEditorStore((state) => state.objectGeometryErrors)
+  const retryObjectGeometry = useEditorStore((state) => state.retryObjectGeometry)
   const schedulerRef = useRef<AutosaveScheduler | null>(null)
+  const selectedGeometryError = selectedId !== null ? (objectGeometryErrors[selectedId] ?? null) : null
 
   const saving = saveState === 'saving'
   const saveDisabled = saveState === 'saving' || saveState === 'conflict'
@@ -167,7 +171,7 @@ export function App() {
   if (!projectId) {
     return (
       <main>
-        <p role="alert">Add ?project=&lt;id&gt; to the URL to open a project.</p>
+        <ProjectPicker />
       </main>
     )
   }
@@ -224,6 +228,14 @@ export function App() {
             </svg>
             Delete
           </button>
+          {selectedGeometryError && (
+            <span className="object-geometry-error">
+              <span role="alert">{selectedGeometryError}</span>
+              <button type="button" onClick={() => selectedId !== null && retryObjectGeometry(selectedId)}>
+                Retry
+              </button>
+            </span>
+          )}
           <button type="button" onClick={handleSave} disabled={saveDisabled}>
             <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16">
               <path d="M2 2h9l3 3v9H2z" />

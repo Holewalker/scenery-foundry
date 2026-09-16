@@ -91,11 +91,16 @@ if ($MyInvocation.InvocationName -ne '.') {
     Assert-SeedOwnership -UserId $UserId -ProjectId $ProjectId `
         -UserExistsLookup { param($id) [bool](Invoke-SeedPsql $ComposeProjectName "select 1 from users where id='$id'") } `
         -ProjectOwnerLookup { param($id) Invoke-SeedPsql $ComposeProjectName "select owner_id from projects where id='$id'" }
-    $insertedId = Invoke-SeedPsql $ComposeProjectName ("insert into prepared_assets(id,project_id,processing_status,geometry_status,storage_key,original_sha256) values " +
-        "('$AssetId','$ProjectId','READY','VALID_VOLUME','$($resolved.StorageKey)','$sha') " +
-        "on conflict (id) do update set storage_key=excluded.storage_key, original_sha256=excluded.original_sha256 " +
-        "where prepared_assets.project_id = excluded.project_id " +
+    # V5 renamed prepared_assets -> assets and replaced project_id with owner_id; a seed fixture is
+    # never run through the real geometry_jobs pipeline, so it must never claim READY/previewable —
+    # it is inserted UPLOADED/UNKNOWN, the same honest starting state AssetIntakeService.insertAsset
+    # gives a freshly uploaded file, and previewAvailable stays false until a real worker run happens.
+    $originalFilename = (Split-Path -Leaf $resolved.StorageKey) -replace "'", "''"
+    $insertedId = Invoke-SeedPsql $ComposeProjectName ("insert into assets(id,owner_id,processing_status,geometry_status,storage_key,original_sha256,original_filename) values " +
+        "('$AssetId','$UserId','UPLOADED','UNKNOWN','$($resolved.StorageKey)','$sha','$originalFilename') " +
+        "on conflict (id) do update set storage_key=excluded.storage_key, original_sha256=excluded.original_sha256, original_filename=excluded.original_filename " +
+        "where assets.owner_id = excluded.owner_id " +
         "returning id")
     Confirm-SeedAssetInserted -InsertedId $insertedId -AssetId $AssetId | Out-Null
-    Write-Output "Seeded asset $AssetId -> $($resolved.StorageKey) ($sha)"
+    Write-Output "Seeded asset $AssetId -> $($resolved.StorageKey) ($sha) as UPLOADED (no preview; not usable in the editor until a real geometry-job run marks it READY)"
 }

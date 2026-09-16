@@ -101,6 +101,22 @@ class AssetControllerTest {
     }
 
     @Test
+    void listReturnsTheOriginalFilenameAndToleratesALegacyNullFilename() throws Exception {
+        var owner = UUID.randomUUID();
+        var namedAssetId = UUID.randomUUID();
+        var named = new AssetCatalogEntry(namedAssetId, owner, AssetProcessingStatus.READY, AssetGeometryStatus.VALID_VOLUME,
+            "assets/" + namedAssetId + "/original.stl", "a".repeat(64), null, null, null, "cube.stl");
+        var legacy = new AssetCatalogEntry(UUID.randomUUID(), owner, AssetProcessingStatus.READY, AssetGeometryStatus.VALID_VOLUME,
+            "assets/legacy/original.stl", "b".repeat(64), null, null, null);
+        when(catalogRepository.findCatalogForOwner(owner)).thenReturn(List.of(named, legacy));
+
+        mvc.perform(get("/api/assets").with(authentication(authFor(owner))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].originalFilename").value("cube.stl"))
+            .andExpect(jsonPath("$[1].originalFilename").value(org.hamcrest.Matchers.nullValue()));
+    }
+
+    @Test
     void getReturnsAnAssetResponseDtoWithNoLeakedOwnerIdOrStorageKeysForTheAuthenticatedOwner() throws Exception {
         var owner = UUID.randomUUID();
         var assetId = UUID.randomUUID();
@@ -113,6 +129,19 @@ class AssetControllerTest {
             .andExpect(jsonPath("$.ownerId").doesNotExist())
             .andExpect(jsonPath("$.originalStorageKey").doesNotExist())
             .andExpect(jsonPath("$.previewStorageKey").doesNotExist());
+    }
+
+    @Test
+    void getReturnsTheOriginalFilenameForASingleAsset() throws Exception {
+        var owner = UUID.randomUUID();
+        var assetId = UUID.randomUUID();
+        var entry = new AssetCatalogEntry(assetId, owner, AssetProcessingStatus.READY, AssetGeometryStatus.VALID_VOLUME,
+            "assets/" + assetId + "/original.stl", "a".repeat(64), null, null, null, "cube.stl");
+        when(catalogRepository.findByOwnerAndId(owner, assetId)).thenReturn(Optional.of(entry));
+
+        mvc.perform(get("/api/assets/{id}", assetId).with(authentication(authFor(owner))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.originalFilename").value("cube.stl"));
     }
 
     @Test

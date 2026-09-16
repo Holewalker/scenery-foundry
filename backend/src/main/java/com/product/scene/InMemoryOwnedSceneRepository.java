@@ -22,6 +22,10 @@ public final class InMemoryOwnedSceneRepository implements OwnedSceneRepository 
     @Override public Optional<Project> findProjectByOwner(UUID ownerId, UUID projectId) {
         return Optional.ofNullable(projects.get(projectId)).filter(project -> project.ownerId().equals(ownerId));
     }
+    @Override public List<Project> findProjectsByOwner(UUID ownerId) {
+        return projects.values().stream().filter(project -> project.ownerId().equals(ownerId))
+            .sorted(Comparator.comparing(Project::id)).toList();
+    }
     public void saveAsset(PreparedAsset asset) {
         assets.computeIfAbsent(asset.projectId(), key -> new ArrayList<>()).add(asset);
         readyAssetOwners.put(asset.id(), ownerOfProject(asset.projectId()));

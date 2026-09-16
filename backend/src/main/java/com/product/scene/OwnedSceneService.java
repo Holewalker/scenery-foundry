@@ -31,6 +31,20 @@ public class OwnedSceneService {
         this.requireVersion = sceneProperties.requireVersion();
     }
     public void createProject(Project project) { repository.save(project); }
+
+    /** Server-generates the project id; rejects a blank/missing name (D-2026-09: additive project naming). */
+    public Project createProject(UUID ownerId, String name) {
+        if (name == null || name.isBlank()) throw new InvalidSceneException("project name is required");
+        var project = new Project(UUID.randomUUID(), ownerId, name);
+        repository.save(project);
+        return project;
+    }
+
+    public List<Project> listProjects(UUID ownerId) {
+        OwnerScope.requireOwner(ownerId);
+        return repository.findProjectsByOwner(ownerId);
+    }
+
     public Project findProject(UUID ownerId, UUID projectId) {
         OwnerScope.requireOwner(ownerId);
         return repository.findProjectByOwner(ownerId, projectId).orElseThrow(OwnedResourceNotFoundException::new);

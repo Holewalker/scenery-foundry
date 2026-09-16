@@ -197,26 +197,64 @@ describe('print group / level assignment', () => {
 describe('upsertAssets', () => {
   it('updates matching entries by id, preserves untouched entries, and appends unknown ids in order', () => {
     useEditorStore.getState().setAssets([
-      { id: 'asset-a', processingStatus: 'UPLOADED' },
-      { id: 'asset-b', processingStatus: 'PROCESSING' },
+      { id: 'asset-a', processingStatus: 'UPLOADED', previewAvailable: false, originalFilename: 'a.stl' },
+      { id: 'asset-b', processingStatus: 'PROCESSING', previewAvailable: false, originalFilename: null },
     ])
 
     useEditorStore.getState().upsertAssets([
-      { id: 'asset-b', processingStatus: 'READY' },
-      { id: 'asset-c', processingStatus: 'UPLOADED' },
+      { id: 'asset-b', processingStatus: 'READY', previewAvailable: true, originalFilename: null },
+      { id: 'asset-c', processingStatus: 'UPLOADED', previewAvailable: false, originalFilename: 'c.stl' },
     ])
 
     expect(useEditorStore.getState().assets).toEqual([
-      { id: 'asset-a', processingStatus: 'UPLOADED' },
-      { id: 'asset-b', processingStatus: 'READY' },
-      { id: 'asset-c', processingStatus: 'UPLOADED' },
+      { id: 'asset-a', processingStatus: 'UPLOADED', previewAvailable: false, originalFilename: 'a.stl' },
+      { id: 'asset-b', processingStatus: 'READY', previewAvailable: true, originalFilename: null },
+      { id: 'asset-c', processingStatus: 'UPLOADED', previewAvailable: false, originalFilename: 'c.stl' },
     ])
   })
 
   it('leaves existing state untouched when merging an empty list', () => {
-    useEditorStore.getState().setAssets([{ id: 'asset-a', processingStatus: 'READY' }])
+    useEditorStore
+      .getState()
+      .setAssets([{ id: 'asset-a', processingStatus: 'READY', previewAvailable: true, originalFilename: null }])
     useEditorStore.getState().upsertAssets([])
-    expect(useEditorStore.getState().assets).toEqual([{ id: 'asset-a', processingStatus: 'READY' }])
+    expect(useEditorStore.getState().assets).toEqual([
+      { id: 'asset-a', processingStatus: 'READY', previewAvailable: true, originalFilename: null },
+    ])
+  })
+})
+
+describe('object geometry errors (scoped per object, with a per-object retry tick)', () => {
+  it('sets and clears a per-object geometry error without affecting other objects', () => {
+    useEditorStore.getState().setObjectGeometryError(1, 'Failed to load object geometry.')
+    useEditorStore.getState().setObjectGeometryError(2, 'No preview available for this object.')
+
+    expect(useEditorStore.getState().objectGeometryErrors).toEqual({
+      1: 'Failed to load object geometry.',
+      2: 'No preview available for this object.',
+    })
+
+    useEditorStore.getState().setObjectGeometryError(1, null)
+
+    expect(useEditorStore.getState().objectGeometryErrors).toEqual({
+      2: 'No preview available for this object.',
+    })
+  })
+
+  it('never touches the global error field', () => {
+    useEditorStore.getState().setObjectGeometryError(1, 'Failed to load object geometry.')
+    expect(useEditorStore.getState().error).toBeNull()
+  })
+
+  it('retryObjectGeometry bumps only the retry tick for the given object id', () => {
+    expect(useEditorStore.getState().geometryRetryTick[1] ?? 0).toBe(0)
+
+    useEditorStore.getState().retryObjectGeometry(1)
+    expect(useEditorStore.getState().geometryRetryTick[1]).toBe(1)
+    expect(useEditorStore.getState().geometryRetryTick[2] ?? 0).toBe(0)
+
+    useEditorStore.getState().retryObjectGeometry(1)
+    expect(useEditorStore.getState().geometryRetryTick[1]).toBe(2)
   })
 })
 
@@ -282,16 +320,20 @@ describe('autosave-related store fields (scene_version, revision, save state)', 
 
 describe('hasPendingAssets', () => {
   it('reports pending when any asset is still UPLOADED or PROCESSING', () => {
-    expect(hasPendingAssets([{ id: 'a', processingStatus: 'UPLOADED' }])).toBe(true)
-    expect(hasPendingAssets([{ id: 'a', processingStatus: 'PROCESSING' }])).toBe(true)
+    expect(
+      hasPendingAssets([{ id: 'a', processingStatus: 'UPLOADED', previewAvailable: false, originalFilename: null }]),
+    ).toBe(true)
+    expect(
+      hasPendingAssets([{ id: 'a', processingStatus: 'PROCESSING', previewAvailable: false, originalFilename: null }]),
+    ).toBe(true)
   })
 
   it('reports no pending work once every asset has settled into READY or FAILED', () => {
     expect(hasPendingAssets([])).toBe(false)
     expect(
       hasPendingAssets([
-        { id: 'a', processingStatus: 'READY' },
-        { id: 'b', processingStatus: 'FAILED' },
+        { id: 'a', processingStatus: 'READY', previewAvailable: true, originalFilename: null },
+        { id: 'b', processingStatus: 'FAILED', previewAvailable: false, originalFilename: null },
       ]),
     ).toBe(false)
   })
