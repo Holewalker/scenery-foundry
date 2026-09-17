@@ -438,6 +438,7 @@ describe('App', () => {
       'Rotate',
       'Snap',
       'Fit model',
+      'Lay flat',
       'Delete',
       'Save',
     ])

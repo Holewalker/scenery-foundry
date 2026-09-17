@@ -1,5 +1,9 @@
-import { Euler, MathUtils, Matrix4, Quaternion, Vector3 } from 'three'
+import { Box3, Matrix4, Quaternion, Vector3 } from 'three'
 import { create } from 'zustand'
+import { calculateLayFlatTransform } from './layFlat'
+import { assetTranslation } from './objectPivot'
+import { solveFaceSnap } from './faceSnap'
+import type { SurfaceData, SnapObject } from './faceSnap'
 
 export type Vec3 = [number, number, number]
 export type Vec4 = [number, number, number, number]
@@ -73,6 +77,16 @@ export interface EditorObject {
   levelId: string | null
 }
 
+export interface SelectedFace {
+  normal: Vec3
+  boundsMin: Vec3
+  boundsMax: Vec3
+}
+export interface DragPreview {
+  translationMm: Vec3
+  quaternionXyzw: Vec4
+}
+
 export interface PrintGroupSummary {
   id: string
   name: string
@@ -84,21 +98,6 @@ export interface LevelSummary {
 }
 
 export type TransformMode = 'translate' | 'rotate'
-
-const SNAP_TRANSLATION_MM = 50
-const SNAP_ROTATION_STEP_RADIANS = MathUtils.degToRad(15)
-
-function snapTranslation([x, y, z]: Vec3): Vec3 {
-  const snap = (axis: number) => (Math.round(axis / SNAP_TRANSLATION_MM) * SNAP_TRANSLATION_MM) || 0
-  return [snap(x), snap(y), snap(z)]
-}
-
-function snapQuaternion(quaternionXyzw: Vec4): Vec4 {
-  const euler = new Euler().setFromQuaternion(new Quaternion(...quaternionXyzw))
-  const snap = (axis: number) => Math.round(axis / SNAP_ROTATION_STEP_RADIANS) * SNAP_ROTATION_STEP_RADIANS
-  const snapped = new Quaternion().setFromEuler(new Euler(snap(euler.x), snap(euler.y), snap(euler.z), euler.order))
-  return [snapped.x, snapped.y, snapped.z, snapped.w]
-}
 
 function composeMatrixColumnMajor(translationMm: Vec3, quaternionXyzw: Vec4, scale: Vec3): number[] {
   const matrix = new Matrix4().compose(new Vector3(...translationMm), new Quaternion(...quaternionXyzw), new Vector3(...scale))
@@ -115,8 +114,12 @@ const INITIAL_STATE = {
   printGroups: [] as PrintGroupSummary[],
   levels: [] as LevelSummary[],
   selectedId: null as number | null,
+  selectedFace: null as SelectedFace | null,
+  dragPreview: null as DragPreview | null,
+  layFlatMode: false,
   mode: 'translate' as TransformMode,
   snapEnabled: false,
+  snapFeedback: null as string | null,
   orbitEnabled: true,
   dirty: false,
   loading: false,
@@ -135,7 +138,11 @@ export interface EditorState {
   printGroups: PrintGroupSummary[]
   levels: LevelSummary[]
   selectedId: number | null
+  selectedFace: SelectedFace | null
+  dragPreview: DragPreview | null
+  layFlatMode: boolean
   mode: TransformMode
+  snapFeedback: string | null
   snapEnabled: boolean
   orbitEnabled: boolean
   dirty: boolean
@@ -151,9 +158,15 @@ export interface EditorState {
   upsertAssets: (assets: AssetSummary[]) => void
   insert: (assetId: string) => number
   select: (id: number | null) => void
+  selectFace: (id: number, face: SelectedFace) => void
+  layFlatSelected: () => void
+  toggleLayFlatMode: () => void
+  layFlatObject: (id: number, face: SelectedFace) => void
   setMode: (mode: TransformMode) => void
   toggleSnap: () => void
   setDragging: (dragging: boolean) => void
+  setDragPreview: (preview: DragPreview | null) => void
+  commitPivotTransform: (id: number, pivot: Vec3, quaternion: Vec4, center: Vec3, mode: TransformMode, snapContext?: { surfaces: SurfaceData; targets: SnapObject[] }) => void
   move: (id: number, translationMm: Vec3) => void
   rotate: (id: number, quaternionXyzw: Vec4) => void
   /** Precise measured edit; unlike drag transforms, this intentionally bypasses snapping. */
@@ -199,15 +212,65 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((state) => ({ objects: [...state.objects, created], selectedId: id, dirty: true, revision: state.revision + 1 }))
     return id
   },
-  select: (id) => set({ selectedId: id }),
+  select: (id) => set({ selectedId: id, selectedFace: null }),
+  selectFace: (id, face) => set({ selectedId: id, selectedFace: face }),
+  toggleLayFlatMode: () => set((state) => ({ layFlatMode: !state.layFlatMode })),
+  layFlatObject: (id, face) => {
+    const object = get().objects.find((candidate) => candidate.id === id)
+    if (!object) return
+    const transform = calculateLayFlatTransform(face.normal, object.quaternionXyzw, object.translationMm, object.scale,
+      new Box3(new Vector3(...face.boundsMin), new Vector3(...face.boundsMax)))
+    if (!transform) return
+    set((state) => ({ objects: state.objects.map((candidate) => candidate.id === id ? { ...candidate, quaternionXyzw: transform.quaternion, translationMm: transform.translation } : candidate), selectedId: id, selectedFace: null, layFlatMode: false, dirty: true, revision: state.revision + 1 }))
+  },
+  layFlatSelected: () => {
+    const state = get()
+    if (state.selectedId === null || !state.selectedFace) return
+    const object = state.objects.find((candidate) => candidate.id === state.selectedId)
+    if (!object) return
+    const transform = calculateLayFlatTransform(
+      state.selectedFace.normal,
+      object.quaternionXyzw,
+      object.translationMm,
+      object.scale,
+      new Box3(new Vector3(...state.selectedFace.boundsMin), new Vector3(...state.selectedFace.boundsMax)),
+    )
+    if (!transform) return
+    set((current) => ({
+      objects: current.objects.map((candidate) =>
+        candidate.id === state.selectedId
+          ? { ...candidate, quaternionXyzw: transform.quaternion, translationMm: transform.translation }
+          : candidate,
+      ),
+      dirty: true,
+      revision: current.revision + 1,
+    }))
+  },
   setMode: (mode) => set({ mode }),
-  toggleSnap: () => set((state) => ({ snapEnabled: !state.snapEnabled })),
+  toggleSnap: () => set((state) => ({ snapEnabled: !state.snapEnabled, snapFeedback: null })),
   setDragging: (dragging) => set({ orbitEnabled: !dragging }),
+  setDragPreview: (preview) => set({ dragPreview: preview }),
+  commitPivotTransform: (id, pivot, quaternion, center, mode, snapContext) => set((state) => {
+    const object = state.objects.find(candidate => candidate.id === id)
+    if (!object) return {}
+    const nextQuaternion = mode === 'rotate' ? quaternion : object.quaternionXyzw
+    const translation = assetTranslation(pivot, nextQuaternion, object.scale, center)
+    const snapped = state.snapEnabled && snapContext ? solveFaceSnap({ id, translation, quaternion: nextQuaternion,
+      scale: object.scale, surfaces: snapContext.surfaces }, snapContext.targets) : null
+    return {
+      objects: state.objects.map(candidate => candidate.id === id ? { ...candidate,
+        translationMm: snapped?.translation ?? translation, quaternionXyzw: snapped?.quaternion ?? nextQuaternion } : candidate),
+      snapFeedback: !state.snapEnabled ? null : snapped ? (snapped.targetId === 'ground' ? 'Snapped to ground' : 'Faces and nearest edges aligned')
+        : !snapContext ? 'Face snap geometry is still preparing or unavailable' : snapContext.surfaces.limited ? 'Face snap unavailable: mesh exceeds geometry budget' : 'No nearby compatible face',
+      dirty: true,
+      revision: state.revision + 1,
+    }
+  }),
   move: (id, translationMm) =>
     set((state) => ({
       objects: state.objects.map((object) =>
         object.id === id
-          ? { ...object, translationMm: state.snapEnabled ? snapTranslation(translationMm) : translationMm }
+          ? { ...object, translationMm: translationMm }
           : object,
       ),
       dirty: true,
@@ -217,7 +280,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((state) => ({
       objects: state.objects.map((object) =>
         object.id === id
-          ? { ...object, quaternionXyzw: state.snapEnabled ? snapQuaternion(quaternionXyzw) : quaternionXyzw }
+          ? { ...object, quaternionXyzw: quaternionXyzw }
           : object,
       ),
       dirty: true,

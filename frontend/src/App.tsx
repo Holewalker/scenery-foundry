@@ -33,8 +33,13 @@ export function App() {
   const setSaveError = useEditorStore((state) => state.setError)
   const dirty = useEditorStore((state) => state.dirty)
   const selectedId = useEditorStore((state) => state.selectedId)
+  const selectedObject = useEditorStore((state) => state.objects.find((object) => object.id === selectedId) ?? null)
+  const dragPreview = useEditorStore((state) => state.dragPreview)
+  const layFlatMode = useEditorStore((state) => state.layFlatMode)
+  const toggleLayFlatMode = useEditorStore((state) => state.toggleLayFlatMode)
   const remove = useEditorStore((state) => state.remove)
   const snapEnabled = useEditorStore((state) => state.snapEnabled)
+  const snapFeedback = useEditorStore((state) => state.snapFeedback)
   const toggleSnap = useEditorStore((state) => state.toggleSnap)
   const objectGeometryErrors = useEditorStore((state) => state.objectGeometryErrors)
   const retryObjectGeometry = useEditorStore((state) => state.retryObjectGeometry)
@@ -200,6 +205,7 @@ export function App() {
           <ol className="panel-guidance">
             <li>Select an asset</li>
             <li>Place it in the scene</li>
+            <li>Choose a support zone to lay it flat</li>
             <li>Assign it to a print group</li>
             <li>Save or export</li>
           </ol>
@@ -210,6 +216,12 @@ export function App() {
         </aside>
         <section className="viewport">
           <EditorCanvas />
+          {selectedObject && (
+            <div className="transform-readout" aria-live="polite">
+              Position: {(dragPreview?.translationMm ?? selectedObject.translationMm).map((value) => value.toFixed(1)).join(', ')}
+              {' · '}Rotation: {(dragPreview?.quaternionXyzw ?? selectedObject.quaternionXyzw).map((value) => value.toFixed(3)).join(', ')}
+            </div>
+          )}
         </section>
         <footer className="editor-toolbar">
           <button type="button" aria-pressed={mode === 'translate'} onClick={() => setMode('translate')}>
@@ -225,17 +237,21 @@ export function App() {
             </svg>
             Rotate
           </button>
-          <button type="button" aria-pressed={snapEnabled} onClick={toggleSnap}>
+          <button type="button" title="Align nearby faces and nearest edges on release" aria-pressed={snapEnabled} onClick={toggleSnap}>
             <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16">
               <path d="M1 5h14M1 11h14M5 1v14M11 1v14" />
             </svg>
             Snap
           </button>
+          {snapEnabled && snapFeedback && <span role="status">{snapFeedback}</span>}
           <button type="button" onClick={requestFitToScene}>
             <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16">
               <path d="M2 5V2h3M11 2h3v3M14 11v3h-3M5 14H2v-3" />
             </svg>
             Fit model
+          </button>
+          <button type="button" aria-pressed={layFlatMode} onClick={toggleLayFlatMode} disabled={selectedId === null}>
+            Lay flat
           </button>
           <button type="button" className="danger" onClick={handleDelete} disabled={selectedId === null}>
             <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 16 16">

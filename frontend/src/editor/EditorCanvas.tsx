@@ -1,12 +1,18 @@
 import { Canvas, useThree } from '@react-three/fiber'
 import { Html, OrbitControls, TransformControls } from '@react-three/drei'
-import { memo, useEffect, useRef, useState } from 'react'
+import { createContext, memo, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { BufferGeometry, Group, Mesh, Object3D, PerspectiveCamera } from 'three'
-import { Box3, Object3D as Object3DClass } from 'three'
+import { Box3, Object3D as Object3DClass, Vector3 } from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { fetchAssetPreview } from '../api/client'
 import { frameBox } from './cameraFit'
+import { supportNormalFromGeometry } from './layFlat'
+import { intersectHorizontalDragPlane } from './directDrag'
+import { centeredGeometry, pivotPosition } from './objectPivot'
+import { prepareSurfaces } from './surfacePreparation'
+import type { SurfaceData, SnapObject } from './faceSnap'
+const SnapSurfaces = createContext<Map<number, SurfaceData> | null>(null)
 import type { EditorObject, Vec3, Vec4 } from './store'
 import { useEditorStore } from './store'
 
@@ -21,12 +27,13 @@ function firstMeshGeometry(root: Object3D): BufferGeometry | null {
   return found ? (found as Mesh).geometry : null
 }
 
-function visibleMeshBounds(root: Object3D): Box3 | null {
+function visibleMeshBounds(root: Object3D, selectedId: number | null = null): Box3 | null {
   const bounds = new Box3()
   let found = false
   root.traverse((child) => {
     const mesh = child as Mesh
     if (!mesh.isMesh || !mesh.visible || !mesh.geometry) return
+    if (selectedId !== null && mesh.userData.editorObjectId !== selectedId) return
     const meshBounds = new Box3().setFromObject(mesh)
     if (meshBounds.isEmpty()) return
     const values = [...meshBounds.min.toArray(), ...meshBounds.max.toArray()]
@@ -62,6 +69,7 @@ function useObjectGeometry(assetId: string, objectId: number): BufferGeometry | 
         if (cancelled) return
         const meshGeometry = firstMeshGeometry(gltf.scene)
         if (!meshGeometry) throw new Error('preview.glb scene graph contains no mesh')
+        meshGeometry.computeBoundingBox()
         setGeometry(meshGeometry)
         setObjectGeometryError(objectId, null)
       })
@@ -84,15 +92,60 @@ function useObjectGeometry(assetId: string, objectId: number): BufferGeometry | 
 // gates the mouseUp dispatch, intermittently leaving orbit controls disabled after mouseup.
 const EditorObjectMesh = memo(function EditorObjectMesh({ object }: { object: EditorObject }) {
   const geometry = useObjectGeometry(object.assetId, object.id)
+  const surfaceRegistry = useContext(SnapSurfaces)
+  useEffect(() => {
+    let cancelled = false
+    if (geometry) void prepareSurfaces(geometry).then(data => {
+      if (!cancelled && data) surfaceRegistry?.set(object.id, data)
+    })
+    return () => { cancelled = true; surfaceRegistry?.delete(object.id) }
+  }, [geometry, object.id, surfaceRegistry])
   const geometryError = useEditorStore((state) => state.objectGeometryErrors[object.id] ?? null)
-  const meshRef = useRef<Mesh>(null)
+  const meshRef = useRef<Mesh>(null!)
+  const directDragRef = useRef<{ pointerId: number; offset: Vector3 } | null>(null)
   const selectedId = useEditorStore((state) => state.selectedId)
   const mode = useEditorStore((state) => state.mode)
   const select = useEditorStore((state) => state.select)
-  const move = useEditorStore((state) => state.move)
-  const rotate = useEditorStore((state) => state.rotate)
+  const selectFace = useEditorStore((state) => state.selectFace)
+  const commitPivotTransform = useEditorStore((state) => state.commitPivotTransform)
   const setDragging = useEditorStore((state) => state.setDragging)
+  const setDragPreview = useEditorStore((state) => state.setDragPreview)
   const retryObjectGeometry = useEditorStore((state) => state.retryObjectGeometry)
+  const layFlatMode = useEditorStore((state) => state.layFlatMode)
+  const layFlatObject = useEditorStore((state) => state.layFlatObject)
+  const centered = useMemo(() => geometry ? centeredGeometry(geometry) : null, [geometry])
+  useEffect(() => () => centered?.geometry.dispose(), [centered])
+
+  function handleMeshClick(event: { face?: { normal: { x: number; y: number; z: number } }; faceIndex?: number }) {
+    if (layFlatMode && geometry?.boundingBox) {
+      if (event.face) {
+        const supportNormal = supportNormalFromGeometry(
+          geometry,
+          event.faceIndex ?? -1,
+          new Vector3(event.face.normal.x, event.face.normal.y, event.face.normal.z),
+        )
+        layFlatObject(object.id, {
+          normal: supportNormal.toArray() as Vec3,
+          boundsMin: geometry.boundingBox.min.toArray() as Vec3,
+          boundsMax: geometry.boundingBox.max.toArray() as Vec3,
+        })
+      }
+      return
+    }
+    select(object.id)
+    if (!geometry || !event.face) return
+    if (!geometry.boundingBox) geometry.computeBoundingBox()
+    if (!geometry.boundingBox) return
+    selectFace(object.id, {
+      normal: supportNormalFromGeometry(
+        geometry,
+        event.faceIndex ?? -1,
+        new Vector3(event.face.normal.x, event.face.normal.y, event.face.normal.z),
+      ).toArray() as Vec3,
+      boundsMin: geometry.boundingBox.min.toArray() as Vec3,
+      boundsMax: geometry.boundingBox.max.toArray() as Vec3,
+    })
+  }
 
   if (!geometry) {
     // Broken objects stay locatable and selectable (a small wireframe box at the object's own
@@ -127,20 +180,53 @@ const EditorObjectMesh = memo(function EditorObjectMesh({ object }: { object: Ed
   const mesh = (
     <mesh
       ref={meshRef}
-      geometry={geometry}
-      position={object.translationMm}
+      userData={{ editorObjectId: object.id }}
+      geometry={centered!.geometry}
+      position={pivotPosition(object.translationMm, object.quaternionXyzw, object.scale, centered!.center)}
       quaternion={object.quaternionXyzw}
       scale={object.scale}
-      onClick={() => select(object.id)}
+      onClick={handleMeshClick}
+      onPointerDown={handleDirectPointerDown}
+      onPointerMove={handleDirectPointerMove}
+      onPointerUp={handleDirectPointerUp}
     >
       <meshStandardMaterial color="#9b7358" roughness={0.88} metalness={0} />
     </mesh>
   )
 
   if (selectedId !== object.id) return mesh
+  if (layFlatMode) {
+    const bounds = geometry.boundingBox!
+    const center = bounds.getCenter(new Vector3())
+    const size = bounds.getSize(new Vector3())
+    const zones = [
+      { label: 'Top', normal: [0, 1, 0] as Vec3, position: [center.x, bounds.max.y + 0.5, center.z] as Vec3, rotation: [-Math.PI / 2, 0, 0] as Vec3, dimensions: [size.x, size.z] as [number, number] },
+      { label: 'Bottom', normal: [0, -1, 0] as Vec3, position: [center.x, bounds.min.y - 0.5, center.z] as Vec3, rotation: [Math.PI / 2, 0, 0] as Vec3, dimensions: [size.x, size.z] as [number, number] },
+      { label: 'Right', normal: [1, 0, 0] as Vec3, position: [bounds.max.x + 0.5, center.y, center.z] as Vec3, rotation: [0, Math.PI / 2, 0] as Vec3, dimensions: [size.z, size.y] as [number, number] },
+      { label: 'Left', normal: [-1, 0, 0] as Vec3, position: [bounds.min.x - 0.5, center.y, center.z] as Vec3, rotation: [0, -Math.PI / 2, 0] as Vec3, dimensions: [size.z, size.y] as [number, number] },
+      { label: 'Front', normal: [0, 0, 1] as Vec3, position: [center.x, center.y, bounds.max.z + 0.5] as Vec3, rotation: [0, 0, 0] as Vec3, dimensions: [size.x, size.y] as [number, number] },
+      { label: 'Back', normal: [0, 0, -1] as Vec3, position: [center.x, center.y, bounds.min.z - 0.5] as Vec3, rotation: [Math.PI, 0, 0] as Vec3, dimensions: [size.x, size.y] as [number, number] },
+    ]
+    return (
+      <group>
+        {mesh}
+        <group position={object.translationMm} quaternion={object.quaternionXyzw} scale={object.scale}>
+          {zones.map((zone) => (
+            <mesh key={zone.label} position={zone.position} rotation={zone.rotation} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); layFlatObject(object.id, { normal: zone.normal, boundsMin: bounds.min.toArray() as Vec3, boundsMax: bounds.max.toArray() as Vec3 }) }}>
+              <planeGeometry args={zone.dimensions} />
+              <meshBasicMaterial color="#62c6a8" transparent opacity={0.35} depthWrite={false} side={2} />
+            </mesh>
+          ))}
+        </group>
+        <Html position={[0, 45, 0]} center>
+          <div className="lay-flat-candidates" role="status">Choose a highlighted support zone</div>
+        </Html>
+      </group>
+    )
+  }
 
   // Commit the transform ONCE, when the drag ends — not on every intermediate onObjectChange.
-  // TransformControls already mutates the attached mesh directly and drei re-renders the
+  // TransformControls attaches explicitly to this centered mesh and mutates it directly and drei re-renders the
   // Canvas frame on its own 'change' event, so the drag stays visually smooth without this.
   // Committing to the store on every intermediate change re-renders EditorObjectMesh, which
   // gives `mesh` a new element identity; drei's TransformControls re-runs its attach effect
@@ -150,17 +236,68 @@ const EditorObjectMesh = memo(function EditorObjectMesh({ object }: { object: Ed
   function handleObjectChange() {
     const target = meshRef.current
     if (!target) return
-    if (mode === 'translate') move(object.id, target.position.toArray() as Vec3)
-    else rotate(object.id, target.quaternion.toArray() as Vec4)
+    setDragPreview({
+      translationMm: target.position.toArray() as Vec3,
+      quaternionXyzw: target.quaternion.toArray() as Vec4,
+    })
+    const surfaces = surfaceRegistry?.get(object.id)
+    const targets: SnapObject[] = useEditorStore.getState().objects.flatMap(candidate => {
+      const data = surfaceRegistry?.get(candidate.id)
+      return data && candidate.id !== object.id ? [{ id: candidate.id, surfaces: data, translation: candidate.translationMm,
+        quaternion: candidate.quaternionXyzw, scale: candidate.scale }] : []
+    })
+    commitPivotTransform(object.id, target.position.toArray() as Vec3,
+      target.quaternion.toArray() as Vec4, centered!.center, mode, surfaces ? { surfaces, targets } : undefined)
+  }
+
+  function handleDirectPointerDown(event: { stopPropagation: () => void; preventDefault?: () => void; pointerId: number; ray: { origin: Vector3; direction: Vector3 }; target: { setPointerCapture?: (id: number) => void } }) {
+    if (mode !== 'translate' || layFlatMode || !meshRef.current) return
+    event.stopPropagation()
+    event.preventDefault?.()
+    select(object.id)
+    const hit = intersectHorizontalDragPlane(event.ray.origin, event.ray.direction, meshRef.current.position.y)
+    if (!hit) return
+    directDragRef.current = { pointerId: event.pointerId, offset: hit.clone().sub(meshRef.current.position) }
+    event.target.setPointerCapture?.(event.pointerId)
+    setDragging(true)
+  }
+
+  function handleDirectPointerMove(event: { stopPropagation?: () => void; pointerId: number; ray: { origin: Vector3; direction: Vector3 } }) {
+    const drag = directDragRef.current
+    const target = meshRef.current
+    if (!drag || drag.pointerId !== event.pointerId || !target) return
+    event.stopPropagation?.()
+    const hit = intersectHorizontalDragPlane(event.ray.origin, event.ray.direction, target.position.y)
+    if (!hit) return
+    target.position.copy(hit.sub(drag.offset))
+    handleLivePreview()
+  }
+
+  function handleDirectPointerUp(event: { pointerId: number }) {
+    if (!directDragRef.current || directDragRef.current.pointerId !== event.pointerId) return
+    directDragRef.current = null
+    handleObjectChange()
+    setDragPreview(null)
+    setDragging(false)
+  }
+
+  function handleLivePreview() {
+    const target = meshRef.current
+    if (!target) return
+    setDragPreview({ translationMm: target.position.toArray() as Vec3, quaternionXyzw: target.quaternion.toArray() as Vec4 })
   }
 
   return (
     <TransformControls
+      object={meshRef}
       mode={mode}
+      axis={mode === 'translate' ? 'XZ' : undefined}
       onMouseDown={() => setDragging(true)}
+      onObjectChange={handleLivePreview}
       onMouseUp={() => {
         handleObjectChange()
         setDragging(false)
+        setDragPreview(null)
       }}
     >
       {mesh}
@@ -171,7 +308,9 @@ const EditorObjectMesh = memo(function EditorObjectMesh({ object }: { object: Ed
 // Split out of EditorCanvas because useThree() only resolves the R3F context from inside
 // <Canvas>'s own subtree, not from the component that renders <Canvas> itself.
 function SceneContent() {
+  const surfaceRegistry = useMemo(() => new Map<number, SurfaceData>(), [])
   const objects = useEditorStore((state) => state.objects)
+  const selectedId = useEditorStore((state) => state.selectedId)
   const orbitEnabled = useEditorStore((state) => state.orbitEnabled)
   const fitRequestTick = useEditorStore((state) => state.fitRequestTick)
   const { camera } = useThree()
@@ -190,9 +329,13 @@ function SceneContent() {
     // Guards against a ref that isn't a real THREE.Object3D (e.g. this component's own test
     // harness, which mocks <Canvas>/<group> as plain DOM nodes with no scene graph behind them) —
     // Box3.setFromObject requires a genuine Object3D to traverse.
-    const box = group instanceof Object3DClass ? visibleMeshBounds(group) : null
+    let box = group instanceof Object3DClass ? visibleMeshBounds(group, selectedId) : null
+    // If the selected object has no renderable mesh, retain a useful all-scene frame rather than
+    // silently falling back to the origin/default view.
+    if (selectedId !== null && !box && group instanceof Object3DClass) box = visibleMeshBounds(group)
     const perspectiveCamera = camera as PerspectiveCamera
     const previousPosition = perspectiveCamera.position.clone()
+    const previousQuaternion = perspectiveCamera.quaternion.clone()
     const previousNear = perspectiveCamera.near
     const previousFar = perspectiveCamera.far
     const previousTarget = controlsRef.current?.target.clone()
@@ -200,6 +343,7 @@ function SceneContent() {
     const distance = position.distanceTo(target)
     if (!position.toArray().every(Number.isFinite) || !target.toArray().every(Number.isFinite) || !Number.isFinite(distance) || distance <= 0) {
       perspectiveCamera.position.copy(previousPosition)
+      perspectiveCamera.quaternion.copy(previousQuaternion)
       perspectiveCamera.near = previousNear
       perspectiveCamera.far = previousFar
       if (previousTarget && controlsRef.current) controlsRef.current.target.copy(previousTarget)
@@ -208,6 +352,7 @@ function SceneContent() {
     perspectiveCamera.position.copy(position)
     perspectiveCamera.near = Math.max(0.1, distance / 100)
     perspectiveCamera.far = Math.max(10000, distance * 4)
+    perspectiveCamera.lookAt(target)
     perspectiveCamera.updateProjectionMatrix()
     controlsRef.current?.target.copy(target)
     controlsRef.current?.update()
@@ -225,11 +370,15 @@ function SceneContent() {
       <directionalLight position={[-300, 220, -200]} intensity={0.45} />
       <gridHelper args={[2000, 20, '#3a4b56', '#22303a']} />
       <gridHelper args={[200, 20, '#4d616d', '#2a3944']} />
+      <SnapSurfaces.Provider value={surfaceRegistry}>
       <group ref={groupRef}>
         {objects.map((object) => (
-          <EditorObjectMesh key={object.id} object={object} />
+          <group key={object.id} userData={{ editorObjectId: object.id }}>
+            <EditorObjectMesh object={object} />
+          </group>
         ))}
       </group>
+      </SnapSurfaces.Provider>
       <OrbitControls ref={controlsRef} enabled={orbitEnabled} />
     </>
   )

@@ -1,7 +1,8 @@
-import { Euler, MathUtils, Quaternion } from 'three'
+import { BoxGeometry, Euler, MathUtils, Quaternion } from 'three'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { hasPendingAssets, resetEditorStore, useEditorStore } from './store'
 import type { SceneObjectDto } from './store'
+import { extractSurfaces } from './faceSnap'
 
 const identityQuaternion: [number, number, number, number] = [0, 0, 0, 1]
 
@@ -39,19 +40,19 @@ describe('editor store', () => {
     expect(object.quaternionXyzw[1]).toBeCloseTo(0.7071067811865476, 9)
   })
 
-  it('snaps translation to a 50mm grid when snapping is enabled', () => {
+  it('does not quantize canonical translation when face snapping is enabled', () => {
     const id = useEditorStore.getState().insert('asset-1')
     useEditorStore.getState().toggleSnap()
     useEditorStore.getState().move(id, [62, -8, 24])
-    expect(useEditorStore.getState().objects[0].translationMm).toEqual([50, 0, 0])
+    expect(useEditorStore.getState().objects[0].translationMm).toEqual([62, -8, 24])
   })
 
-  it('snaps rotation to 15 degree increments when snapping is enabled', () => {
+  it('does not quantize rotation when face snapping is enabled', () => {
     const id = useEditorStore.getState().insert('asset-1')
     useEditorStore.getState().toggleSnap()
     const rotated = new Quaternion().setFromEuler(new Euler(0, MathUtils.degToRad(20), 0))
     useEditorStore.getState().rotate(id, [rotated.x, rotated.y, rotated.z, rotated.w])
-    const expected = new Quaternion().setFromEuler(new Euler(0, MathUtils.degToRad(15), 0))
+    const expected = new Quaternion().setFromEuler(new Euler(0, MathUtils.degToRad(20), 0))
     const actual = useEditorStore.getState().objects[0].quaternionXyzw
     expect(actual[0]).toBeCloseTo(expected.x, 9)
     expect(actual[1]).toBeCloseTo(expected.y, 9)
@@ -348,5 +349,44 @@ describe('hasPendingAssets', () => {
         { id: 'b', processingStatus: 'FAILED', previewAvailable: false, originalFilename: null },
       ]),
     ).toBe(false)
+  })
+})
+
+
+describe('centered pivot persistence', () => {
+  it('preserves a free pivot gesture and commits asset coordinates atomically', () => {
+    resetEditorStore()
+    const id = useEditorStore.getState().insert('asset-1')
+    useEditorStore.getState().toggleSnap()
+    const before = useEditorStore.getState().revision
+    useEditorStore.getState().commitPivotTransform(id, [74, 26, 10], [0, 0, 0, 1], [10, 20, 30], 'translate')
+    expect(useEditorStore.getState().objects[0].translationMm).toEqual([64, 6, -20])
+    expect(useEditorStore.getState().revision).toBe(before + 1)
+    const dto = useEditorStore.getState().toSceneDto()
+    useEditorStore.getState().loadScene(dto)
+    expect(useEditorStore.getState().toSceneDto().objects).toEqual(dto.objects)
+  })
+})
+
+
+describe('face snap commit', () => {
+  it('applies face alignment once and round-trips the snapped canonical matrix', () => {
+    resetEditorStore()
+    const targetId = useEditorStore.getState().insert('asset-1')
+    const movingId = useEditorStore.getState().insert('asset-1')
+    useEditorStore.getState().setTranslation(targetId, [0,10,0])
+    useEditorStore.getState().toggleSnap()
+    const geometry = new BoxGeometry(50.8,20,50.8)
+    const surfaces = extractSurfaces(geometry.getAttribute('position').array, geometry.getIndex()!.array)
+    const revision = useEditorStore.getState().revision
+    useEditorStore.getState().commitPivotTransform(movingId,[51.5,10,0],[0,0,0,1],[0,0,0],'translate', {
+      surfaces, targets: [{ id:targetId, translation:[0,10,0], quaternion:[0,0,0,1], scale:[1,1,1], surfaces }],
+    })
+    expect(useEditorStore.getState().revision).toBe(revision+1)
+    expect(useEditorStore.getState().objects[1].translationMm[0]).toBeCloseTo(50.8)
+    expect(useEditorStore.getState().snapFeedback).toBe('Faces and nearest edges aligned')
+    const dto = useEditorStore.getState().toSceneDto()
+    useEditorStore.getState().loadScene(dto)
+    expect(useEditorStore.getState().toSceneDto().objects).toEqual(dto.objects)
   })
 })

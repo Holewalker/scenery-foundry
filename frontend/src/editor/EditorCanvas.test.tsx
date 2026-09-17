@@ -1,7 +1,7 @@
 import { act, render, waitFor } from '@testing-library/react'
 import { forwardRef } from 'react'
 import type { Ref, ReactNode } from 'react'
-import { PerspectiveCamera, Vector3 } from 'three'
+import { Box3, BoxGeometry, PerspectiveCamera, Quaternion, Vector3 } from 'three'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetEditorStore, useEditorStore } from './store'
 import { EditorCanvas } from './EditorCanvas'
@@ -12,7 +12,15 @@ vi.mock('../api/client', () => ({ fetchAssetPreview: (...args: unknown[]) => fet
 // Fakes the GLTF scene graph shape a real GLTFLoader.parseAsync would resolve: a root scene
 // Group whose descendants include exactly one Mesh (matching trimesh's plain, un-nested export).
 function fakeGltfScene(geometry: unknown) {
-  const mesh = { isMesh: true, geometry }
+  // Use genuine geometry so the render-only pivot adapter is exercised.
+  const input = geometry as { clone?: unknown; boundingBox?: Box3 }
+  const realGeometry = input.clone ? geometry : new BoxGeometry(2, 2, 2)
+  if (!input.clone && input.boundingBox) {
+    const size = input.boundingBox.getSize(new Vector3())
+    const center = input.boundingBox.getCenter(new Vector3())
+    ;(realGeometry as BoxGeometry).scale(size.x / 2, size.y / 2, size.z / 2).translate(center.x, center.y, center.z)
+  }
+  const mesh = { isMesh: true, geometry: realGeometry }
   return {
     scene: {
       traverse: (callback: (object: unknown) => void) => callback(mesh),
@@ -91,6 +99,77 @@ function seedPreviewableAsset(id: string) {
 }
 
 describe('EditorCanvas', () => {
+  it('attaches controls to the centered mesh and persists pivot rotation in asset coordinates', async () => {
+    const geometry = new BoxGeometry(2, 4, 6).translate(10, 20, 30)
+    parseAsyncSpy.mockResolvedValueOnce(fakeGltfScene(geometry))
+    seedPreviewableAsset('asset-1')
+    const id = useEditorStore.getState().insert('asset-1')
+    useEditorStore.getState().setTranslation(id, [5, 7, 9])
+    useEditorStore.getState().setMode('rotate')
+    const { container } = render(<EditorCanvas />)
+    await waitFor(() => expect(transformSpy).toHaveBeenCalled())
+    const mesh = container.querySelector('mesh')!
+    const props = transformSpy.mock.calls.at(-1)![0]
+    expect(props.object.current).toBe(mesh)
+    expect(mesh).toHaveAttribute('position', '15,27,39')
+    expect(useEditorStore.getState().objects[0].translationMm).toEqual([5, 7, 9])
+    const q = new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), Math.PI / 2).toArray()
+    stubMeshTransform(container, [15, 27, 39], q)
+    act(() => props.onMouseUp())
+    const object = useEditorStore.getState().objects[0]
+    expect(object.translationMm[0]).toBeCloseTo(35)
+    expect(object.translationMm[1]).toBeCloseTo(17)
+    expect(object.translationMm[2]).toBeCloseTo(9)
+    expect(object.quaternionXyzw).toEqual(q)
+    const dto = useEditorStore.getState().toSceneDto().objects[0]
+    expect(dto.matrixWorldColumnMajor.slice(12, 15)).toEqual(object.translationMm)
+  })
+
+  it('reattaches the gizmo to the centered mesh after laying an offset asset flat', async () => {
+    const geometry = new BoxGeometry(2, 4, 6).translate(10, 20, 30)
+    parseAsyncSpy.mockResolvedValueOnce(fakeGltfScene(geometry))
+    seedPreviewableAsset('asset-1')
+    const id = useEditorStore.getState().insert('asset-1')
+    useEditorStore.getState().setTranslation(id, [5, 7, 9])
+    const { container } = render(<EditorCanvas />)
+    await waitFor(() => expect(transformSpy).toHaveBeenCalled())
+    act(() => {
+      useEditorStore.getState().toggleLayFlatMode()
+      useEditorStore.getState().layFlatObject(id, { normal: [1, 0, 0], boundsMin: [9, 18, 27], boundsMax: [11, 22, 33] })
+    })
+    const props = transformSpy.mock.calls.at(-1)![0]
+    const mesh = container.querySelector('mesh')!
+    expect(props.object.current).toBe(mesh)
+    const position = mesh.getAttribute('position')!.split(',').map(Number)
+    expect(position[0]).toBeCloseTo(15)
+    expect(position[1]).toBeCloseTo(1)
+    expect(position[2]).toBeCloseTo(39)
+  })
+
+  it('uses prepared neighboring surfaces only at drag release', async () => {
+    parseAsyncSpy.mockImplementation(() => Promise.resolve(fakeGltfScene(new BoxGeometry(50.8,20,50.8))))
+    seedPreviewableAsset('asset-1')
+    const target = useEditorStore.getState().insert('asset-1')
+    const moving = useEditorStore.getState().insert('asset-1')
+    useEditorStore.getState().setTranslation(target,[0,10,0])
+    useEditorStore.getState().setTranslation(moving,[52,10,0])
+    useEditorStore.getState().toggleSnap()
+    render(<EditorCanvas />)
+    await waitFor(() => expect(transformSpy).toHaveBeenCalled())
+    await act(async () => { await Promise.resolve() })
+    const props = transformSpy.mock.calls.at(-1)![0]
+    props.object.current.position = { toArray: () => [51.5,10,0] }
+    props.object.current.quaternion = { toArray: () => [0,0,0,1] }
+    const revision = useEditorStore.getState().revision
+    act(() => props.onMouseDown())
+    expect(useEditorStore.getState().objects[1].translationMm[0]).toBe(52)
+    expect(useEditorStore.getState().revision).toBe(revision)
+    act(() => props.onMouseUp())
+    expect(useEditorStore.getState().objects[1].translationMm[0]).toBeCloseTo(50.8)
+    expect(useEditorStore.getState().revision).toBe(revision+1)
+    expect(useEditorStore.getState().snapFeedback).toBe('Faces and nearest edges aligned')
+  })
+
   it('fetches the published GLB preview for a scene object and parses the exact fetched bytes for rendering', async () => {
     const buffer = new ArrayBuffer(8)
     fetchAssetPreviewMock.mockResolvedValue(buffer)
@@ -240,7 +319,7 @@ describe('EditorCanvas', () => {
     expect(useEditorStore.getState().orbitEnabled).toBe(true)
   })
 
-  it('defers committing the dragged transform to the store until the drag ends, never on an intermediate change', async () => {
+  it('defers persistence until the drag ends so keyboard movement remains stable', async () => {
     seedPreviewableAsset('asset-1')
     const id = useEditorStore.getState().insert('asset-1')
     useEditorStore.getState().select(id)
@@ -345,6 +424,32 @@ describe('EditorCanvas', () => {
 
     act(() => retry.click())
     expect(useEditorStore.getState().geometryRetryTick[id]).toBe(1)
+  })
+
+  it('renders six clickable support-zone overlays while lay-flat mode is active', async () => {
+    parseAsyncSpy.mockImplementationOnce(() =>
+      Promise.resolve(fakeGltfScene({ boundingBox: new Box3(new Vector3(-10, -20, -30), new Vector3(10, 20, 30)) })),
+    )
+    seedPreviewableAsset('asset-1')
+    const id = useEditorStore.getState().insert('asset-1')
+    useEditorStore.getState().setTranslation(id, [10, 20, 30])
+    useEditorStore.getState().setRotation(id, [0, 0.7071068, 0, 0.7071068])
+    useEditorStore.getState().select(id)
+    const { container } = render(<EditorCanvas />)
+    await waitFor(() => expect(container.querySelector('meshstandardmaterial')).not.toBeNull())
+    act(() => useEditorStore.getState().toggleLayFlatMode())
+    expect(container.querySelectorAll('planeGeometry')).toHaveLength(6)
+    const overlayGroup = Array.from(container.querySelectorAll('group')).find((group) => group.hasAttribute('position'))!
+    expect(overlayGroup).toHaveAttribute('position', '10,20,30')
+    expect(overlayGroup).toHaveAttribute('quaternion', '0,0.7071068,0,0.7071068')
+    expect(overlayGroup).toHaveAttribute('scale', '1,1,1')
+    const zones = overlayGroup.querySelectorAll('mesh')
+    expect(zones[0]).toHaveAttribute('position', '0,20.5,0')
+    expect(zones[1]).toHaveAttribute('position', '0,-20.5,0')
+    expect(zones[4]).toHaveAttribute('position', '0,0,30.5')
+    expect(zones[5]).toHaveAttribute('position', '0,0,-30.5')
+    expect(zones[0].querySelector('planegeometry')).toHaveAttribute('args', '20,60')
+    expect(zones[2].querySelector('planegeometry')).toHaveAttribute('args', '60,40')
   })
 
   // This harness has no real R3F scene graph behind its mocked <group> (see the `instanceof
