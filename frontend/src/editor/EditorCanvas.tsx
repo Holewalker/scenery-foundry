@@ -293,6 +293,9 @@ const EditorObjectMesh = memo(function EditorObjectMesh({ object }: { object: Ed
 
   function cancelDirectDrag(event: { pointerId: number }) {
     if (!directDragRef.current || directDragRef.current.pointerId !== event.pointerId) return
+    if (meshRef.current && centered) {
+      meshRef.current.position.set(...pivotPosition(object.translationMm, object.quaternionXyzw, object.scale, centered.center))
+    }
     directDragRef.current = null
     setDragPreview(null)
     setDragging(false)
