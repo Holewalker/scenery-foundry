@@ -197,6 +197,25 @@ class OwnedSceneMigrationIntegrationTest {
         }
     }
 
+    /** Task V8: findProjectsByOwner against real Postgres — owner isolation, id ordering, empty case. */
+    @Test
+    void findProjectsByOwnerReturnsOwnerScopedNamedProjectsOrderedByIdAndEmptyWhenNone() {
+        var owner = insertUser();
+        var stranger = insertUser();
+
+        assertThat(repository.findProjectsByOwner(owner)).isEmpty();
+
+        var created = service.createProject(owner, "Alpha");
+        var createdAgain = service.createProject(owner, "Beta");
+        service.createProject(stranger, "Not mine");
+
+        // Postgres orders uuid by its byte representation (matches UUID#toString's hex order), not
+        // java.util.UUID#compareTo's signed-long comparison — sort expectations the same way the DB does.
+        var expectedOrder = java.util.stream.Stream.of(created, createdAgain)
+            .sorted(java.util.Comparator.comparing(project -> project.id().toString())).toList();
+        assertThat(repository.findProjectsByOwner(owner)).containsExactlyElementsOf(expectedOrder);
+    }
+
     private UUID insertUser() {
         var id = UUID.randomUUID();
         jdbc.sql("insert into users(id,email,password_hash) values (:id,:email,'hash')")

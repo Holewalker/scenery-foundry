@@ -56,7 +56,7 @@ public class AssetIntakeService {
             var storageKey = storageResolver.allocateKey("assets/" + assetId, file.getOriginalFilename());
             storageResolver.publish(temp, storageKey);
             published = true;
-            insertAsset(assetId, ownerId, storageKey, upload.sha256());
+            insertAsset(assetId, ownerId, storageKey, upload.sha256(), file.getOriginalFilename());
             insertJob(jobId, ownerId, assetId, storageKey, upload.sha256(), upload.byteCount());
 
             return new AssetIntakeResult(assetId, AssetProcessingStatus.UPLOADED, jobId);
@@ -109,10 +109,11 @@ public class AssetIntakeService {
 
     private record Upload(String sha256, long byteCount) { }
 
-    private void insertAsset(UUID assetId, UUID ownerId, String storageKey, String sha256) {
-        jdbc.sql("insert into assets(id,owner_id,processing_status,geometry_status,storage_key,original_sha256) "
-                + "values (:id,:owner,'UPLOADED','UNKNOWN',:storageKey,:sha256)")
-            .param("id", assetId).param("owner", ownerId).param("storageKey", storageKey).param("sha256", sha256).update();
+    private void insertAsset(UUID assetId, UUID ownerId, String storageKey, String sha256, String originalFilename) {
+        jdbc.sql("insert into assets(id,owner_id,processing_status,geometry_status,storage_key,original_sha256,original_filename) "
+                + "values (:id,:owner,'UPLOADED','UNKNOWN',:storageKey,:sha256,:originalFilename)")
+            .param("id", assetId).param("owner", ownerId).param("storageKey", storageKey).param("sha256", sha256)
+            .param("originalFilename", originalFilename).update();
     }
 
     private void insertJob(UUID jobId, UUID ownerId, UUID assetId, String storageKey, String sha256, long sizeBytes) {

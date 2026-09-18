@@ -36,4 +36,22 @@ class AssetResponseTest {
 
         assertThat(AssetResponse.from(entry).previewAvailable()).isFalse();
     }
+
+    @Test
+    void fromPassesThroughTheOriginalFilename() {
+        var assetId = UUID.randomUUID();
+        var entry = new AssetCatalogEntry(assetId, UUID.randomUUID(), AssetProcessingStatus.READY,
+            AssetGeometryStatus.VALID_VOLUME, "assets/" + assetId + "/original.stl", "a".repeat(64),
+            null, null, null, "cube.stl");
+
+        assertThat(AssetResponse.from(entry).originalFilename()).isEqualTo("cube.stl");
+    }
+
+    @Test
+    void fromToleratesANullOriginalFilenameForLegacyRows() {
+        var entry = new AssetCatalogEntry(UUID.randomUUID(), UUID.randomUUID(), AssetProcessingStatus.READY,
+            AssetGeometryStatus.VALID_VOLUME, "assets/x/original.stl", "a".repeat(64), null, null, null);
+
+        assertThat(AssetResponse.from(entry).originalFilename()).isNull();
+    }
 }

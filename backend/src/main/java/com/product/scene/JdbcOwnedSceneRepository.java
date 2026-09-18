@@ -19,14 +19,23 @@ public class JdbcOwnedSceneRepository implements OwnedSceneRepository {
     private final JdbcClient jdbc;
     public JdbcOwnedSceneRepository(JdbcClient jdbc) { this.jdbc = jdbc; }
     @Override public void save(Project project) {
-        jdbc.sql("insert into projects(id, owner_id) values (:id, :owner)")
-            .param("id", project.id()).param("owner", project.ownerId()).update();
+        jdbc.sql("insert into projects(id, owner_id, name) values (:id, :owner, :name)")
+            .param("id", project.id()).param("owner", project.ownerId()).param("name", project.name()).update();
     }
     @Override public Optional<Project> findProjectByOwner(UUID ownerId, UUID projectId) {
-        return jdbc.sql("select id, owner_id from projects where id = :id and owner_id = :owner")
+        return jdbc.sql("select id, owner_id, name from projects where id = :id and owner_id = :owner")
             .param("id", projectId).param("owner", ownerId)
-            .query((resultSet, row) -> new Project(resultSet.getObject("id", UUID.class), resultSet.getObject("owner_id", UUID.class)))
+            .query((resultSet, row) -> mapProject(resultSet))
             .optional();
+    }
+    @Override public List<Project> findProjectsByOwner(UUID ownerId) {
+        return jdbc.sql("select id, owner_id, name from projects where owner_id = :owner order by id")
+            .param("owner", ownerId)
+            .query((resultSet, row) -> mapProject(resultSet))
+            .list();
+    }
+    private static Project mapProject(ResultSet resultSet) throws SQLException {
+        return new Project(resultSet.getObject("id", UUID.class), resultSet.getObject("owner_id", UUID.class), resultSet.getString("name"));
     }
     /* Assets are owner-scoped since V5; "a project's assets" is now derived via scene_objects. These two
      * legacy browsing methods retire with ProjectController's routes in PR3 (task 3.9). */

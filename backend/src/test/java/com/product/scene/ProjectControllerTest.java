@@ -2,8 +2,11 @@ package com.product.scene;
 
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.List;
@@ -32,6 +35,98 @@ class ProjectControllerTest {
         var user = new AuthenticatedUser(foreign, "foreign@example.com");
         var auth = new UsernamePasswordAuthenticationToken(user, null, List.of());
         mvc.perform(get("/api/projects/{id}", project).with(authentication(auth))).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void getReturnsTheProjectIdAndNameButNeverTheOwnerId() throws Exception {
+        var owner = UUID.randomUUID();
+        var project = UUID.randomUUID();
+        when(service.findProject(owner, project)).thenReturn(new Project(project, owner, "My Scene"));
+        var auth = authFor(owner);
+
+        mvc.perform(get("/api/projects/{id}", project).with(authentication(auth)))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.id").value(project.toString()))
+            .andExpect(jsonPath("$.name").value("My Scene"))
+            .andExpect(jsonPath("$.ownerId").doesNotExist());
+    }
+
+    @Test
+    void listProjectsReturnsAnEmptyListWhenTheOwnerHasNone() throws Exception {
+        var owner = UUID.randomUUID();
+        when(service.listProjects(owner)).thenReturn(List.of());
+
+        mvc.perform(get("/api/projects").with(authentication(authFor(owner))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$").isArray())
+            .andExpect(jsonPath("$").isEmpty());
+    }
+
+    @Test
+    void listProjectsReturnsOnlyTheAuthenticatedOwnersProjects() throws Exception {
+        var owner = UUID.randomUUID();
+        var projectA = UUID.randomUUID();
+        var projectB = UUID.randomUUID();
+        when(service.listProjects(owner)).thenReturn(List.of(new Project(projectA, owner, "First"), new Project(projectB, owner, "Second")));
+
+        mvc.perform(get("/api/projects").with(authentication(authFor(owner))))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].id").value(projectA.toString()))
+            .andExpect(jsonPath("$[0].name").value("First"))
+            .andExpect(jsonPath("$[0].ownerId").doesNotExist())
+            .andExpect(jsonPath("$[1].id").value(projectB.toString()))
+            .andExpect(jsonPath("$[1].name").value("Second"));
+    }
+
+    @Test
+    void listProjectsRejectsUnauthenticatedRequests() throws Exception {
+        mvc.perform(get("/api/projects")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void createProjectReturnsCreatedWithAServerGeneratedIdAndTheOwnerFromAuthenticationNotTheBody() throws Exception {
+        var owner = UUID.randomUUID();
+        var foreignOwnerClaimedInBody = UUID.randomUUID();
+        var generated = UUID.randomUUID();
+        when(service.createProject(owner, "My Scene")).thenReturn(new Project(generated, owner, "My Scene"));
+
+        mvc.perform(post("/api/projects").with(authentication(authFor(owner))).with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"name\":\"My Scene\",\"ownerId\":\"" + foreignOwnerClaimedInBody + "\"}"))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.id").value(generated.toString()))
+            .andExpect(jsonPath("$.name").value("My Scene"))
+            .andExpect(jsonPath("$.ownerId").doesNotExist());
+    }
+
+    @Test
+    void createProjectRejectsABlankName() throws Exception {
+        var owner = UUID.randomUUID();
+        when(service.createProject(owner, "   ")).thenThrow(new InvalidSceneException("project name is required"));
+
+        mvc.perform(post("/api/projects").with(authentication(authFor(owner))).with(csrf())
+                .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"   \"}"))
+            .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void createProjectRejectsUnauthenticatedRequests() throws Exception {
+        mvc.perform(post("/api/projects").with(csrf())
+                .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"My Scene\"}"))
+            .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void createProjectRejectsRequestsWithoutACsrfToken() throws Exception {
+        var owner = UUID.randomUUID();
+
+        mvc.perform(post("/api/projects").with(authentication(authFor(owner)))
+                .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"My Scene\"}"))
+            .andExpect(status().isForbidden());
+    }
+
+    private static UsernamePasswordAuthenticationToken authFor(UUID owner) {
+        return new UsernamePasswordAuthenticationToken(new AuthenticatedUser(owner, "owner@example.com"), null, List.of());
     }
 
     @Test

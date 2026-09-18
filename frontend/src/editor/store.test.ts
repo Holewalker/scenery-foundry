@@ -1,7 +1,8 @@
-import { Euler, MathUtils, Quaternion } from 'three'
+import { BoxGeometry, Euler, MathUtils, Quaternion } from 'three'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { hasPendingAssets, resetEditorStore, useEditorStore } from './store'
 import type { SceneObjectDto } from './store'
+import { extractSurfaces } from './faceSnap'
 
 const identityQuaternion: [number, number, number, number] = [0, 0, 0, 1]
 
@@ -39,19 +40,19 @@ describe('editor store', () => {
     expect(object.quaternionXyzw[1]).toBeCloseTo(0.7071067811865476, 9)
   })
 
-  it('snaps translation to a 50mm grid when snapping is enabled', () => {
+  it('does not quantize canonical translation when face snapping is enabled', () => {
     const id = useEditorStore.getState().insert('asset-1')
     useEditorStore.getState().toggleSnap()
     useEditorStore.getState().move(id, [62, -8, 24])
-    expect(useEditorStore.getState().objects[0].translationMm).toEqual([50, 0, 0])
+    expect(useEditorStore.getState().objects[0].translationMm).toEqual([62, -8, 24])
   })
 
-  it('snaps rotation to 15 degree increments when snapping is enabled', () => {
+  it('does not quantize rotation when face snapping is enabled', () => {
     const id = useEditorStore.getState().insert('asset-1')
     useEditorStore.getState().toggleSnap()
     const rotated = new Quaternion().setFromEuler(new Euler(0, MathUtils.degToRad(20), 0))
     useEditorStore.getState().rotate(id, [rotated.x, rotated.y, rotated.z, rotated.w])
-    const expected = new Quaternion().setFromEuler(new Euler(0, MathUtils.degToRad(15), 0))
+    const expected = new Quaternion().setFromEuler(new Euler(0, MathUtils.degToRad(20), 0))
     const actual = useEditorStore.getState().objects[0].quaternionXyzw
     expect(actual[0]).toBeCloseTo(expected.x, 9)
     expect(actual[1]).toBeCloseTo(expected.y, 9)
@@ -197,26 +198,76 @@ describe('print group / level assignment', () => {
 describe('upsertAssets', () => {
   it('updates matching entries by id, preserves untouched entries, and appends unknown ids in order', () => {
     useEditorStore.getState().setAssets([
-      { id: 'asset-a', processingStatus: 'UPLOADED' },
-      { id: 'asset-b', processingStatus: 'PROCESSING' },
+      { id: 'asset-a', processingStatus: 'UPLOADED', previewAvailable: false, originalFilename: 'a.stl' },
+      { id: 'asset-b', processingStatus: 'PROCESSING', previewAvailable: false, originalFilename: null },
     ])
 
     useEditorStore.getState().upsertAssets([
-      { id: 'asset-b', processingStatus: 'READY' },
-      { id: 'asset-c', processingStatus: 'UPLOADED' },
+      { id: 'asset-b', processingStatus: 'READY', previewAvailable: true, originalFilename: null },
+      { id: 'asset-c', processingStatus: 'UPLOADED', previewAvailable: false, originalFilename: 'c.stl' },
     ])
 
     expect(useEditorStore.getState().assets).toEqual([
-      { id: 'asset-a', processingStatus: 'UPLOADED' },
-      { id: 'asset-b', processingStatus: 'READY' },
-      { id: 'asset-c', processingStatus: 'UPLOADED' },
+      { id: 'asset-a', processingStatus: 'UPLOADED', previewAvailable: false, originalFilename: 'a.stl' },
+      { id: 'asset-b', processingStatus: 'READY', previewAvailable: true, originalFilename: null },
+      { id: 'asset-c', processingStatus: 'UPLOADED', previewAvailable: false, originalFilename: 'c.stl' },
     ])
   })
 
   it('leaves existing state untouched when merging an empty list', () => {
-    useEditorStore.getState().setAssets([{ id: 'asset-a', processingStatus: 'READY' }])
+    useEditorStore
+      .getState()
+      .setAssets([{ id: 'asset-a', processingStatus: 'READY', previewAvailable: true, originalFilename: null }])
     useEditorStore.getState().upsertAssets([])
-    expect(useEditorStore.getState().assets).toEqual([{ id: 'asset-a', processingStatus: 'READY' }])
+    expect(useEditorStore.getState().assets).toEqual([
+      { id: 'asset-a', processingStatus: 'READY', previewAvailable: true, originalFilename: null },
+    ])
+  })
+})
+
+describe('object geometry errors (scoped per object, with a per-object retry tick)', () => {
+  it('sets and clears a per-object geometry error without affecting other objects', () => {
+    useEditorStore.getState().setObjectGeometryError(1, 'Failed to load object geometry.')
+    useEditorStore.getState().setObjectGeometryError(2, 'No preview available for this object.')
+
+    expect(useEditorStore.getState().objectGeometryErrors).toEqual({
+      1: 'Failed to load object geometry.',
+      2: 'No preview available for this object.',
+    })
+
+    useEditorStore.getState().setObjectGeometryError(1, null)
+
+    expect(useEditorStore.getState().objectGeometryErrors).toEqual({
+      2: 'No preview available for this object.',
+    })
+  })
+
+  it('never touches the global error field', () => {
+    useEditorStore.getState().setObjectGeometryError(1, 'Failed to load object geometry.')
+    expect(useEditorStore.getState().error).toBeNull()
+  })
+
+  it('retryObjectGeometry bumps only the retry tick for the given object id', () => {
+    expect(useEditorStore.getState().geometryRetryTick[1] ?? 0).toBe(0)
+
+    useEditorStore.getState().retryObjectGeometry(1)
+    expect(useEditorStore.getState().geometryRetryTick[1]).toBe(1)
+    expect(useEditorStore.getState().geometryRetryTick[2] ?? 0).toBe(0)
+
+    useEditorStore.getState().retryObjectGeometry(1)
+    expect(useEditorStore.getState().geometryRetryTick[1]).toBe(2)
+  })
+})
+
+describe('fit-to-scene request tick', () => {
+  it('requestFitToScene bumps the fit request tick on every call', () => {
+    expect(useEditorStore.getState().fitRequestTick).toBe(0)
+
+    useEditorStore.getState().requestFitToScene()
+    expect(useEditorStore.getState().fitRequestTick).toBe(1)
+
+    useEditorStore.getState().requestFitToScene()
+    expect(useEditorStore.getState().fitRequestTick).toBe(2)
   })
 })
 
@@ -282,17 +333,60 @@ describe('autosave-related store fields (scene_version, revision, save state)', 
 
 describe('hasPendingAssets', () => {
   it('reports pending when any asset is still UPLOADED or PROCESSING', () => {
-    expect(hasPendingAssets([{ id: 'a', processingStatus: 'UPLOADED' }])).toBe(true)
-    expect(hasPendingAssets([{ id: 'a', processingStatus: 'PROCESSING' }])).toBe(true)
+    expect(
+      hasPendingAssets([{ id: 'a', processingStatus: 'UPLOADED', previewAvailable: false, originalFilename: null }]),
+    ).toBe(true)
+    expect(
+      hasPendingAssets([{ id: 'a', processingStatus: 'PROCESSING', previewAvailable: false, originalFilename: null }]),
+    ).toBe(true)
   })
 
   it('reports no pending work once every asset has settled into READY or FAILED', () => {
     expect(hasPendingAssets([])).toBe(false)
     expect(
       hasPendingAssets([
-        { id: 'a', processingStatus: 'READY' },
-        { id: 'b', processingStatus: 'FAILED' },
+        { id: 'a', processingStatus: 'READY', previewAvailable: true, originalFilename: null },
+        { id: 'b', processingStatus: 'FAILED', previewAvailable: false, originalFilename: null },
       ]),
     ).toBe(false)
+  })
+})
+
+
+describe('centered pivot persistence', () => {
+  it('preserves a free pivot gesture and commits asset coordinates atomically', () => {
+    resetEditorStore()
+    const id = useEditorStore.getState().insert('asset-1')
+    useEditorStore.getState().toggleSnap()
+    const before = useEditorStore.getState().revision
+    useEditorStore.getState().commitPivotTransform(id, [74, 26, 10], [0, 0, 0, 1], [10, 20, 30], 'translate')
+    expect(useEditorStore.getState().objects[0].translationMm).toEqual([64, 6, -20])
+    expect(useEditorStore.getState().revision).toBe(before + 1)
+    const dto = useEditorStore.getState().toSceneDto()
+    useEditorStore.getState().loadScene(dto)
+    expect(useEditorStore.getState().toSceneDto().objects).toEqual(dto.objects)
+  })
+})
+
+
+describe('face snap commit', () => {
+  it('applies face alignment once and round-trips the snapped canonical matrix', () => {
+    resetEditorStore()
+    const targetId = useEditorStore.getState().insert('asset-1')
+    const movingId = useEditorStore.getState().insert('asset-1')
+    useEditorStore.getState().setTranslation(targetId, [0,10,0])
+    useEditorStore.getState().toggleSnap()
+    const geometry = new BoxGeometry(50.8,20,50.8)
+    const surfaces = extractSurfaces(geometry.getAttribute('position').array, geometry.getIndex()!.array)
+    const revision = useEditorStore.getState().revision
+    useEditorStore.getState().commitPivotTransform(movingId,[51.5,10,0],[0,0,0,1],[0,0,0],'translate', {
+      surfaces, targets: [{ id:targetId, translation:[0,10,0], quaternion:[0,0,0,1], scale:[1,1,1], surfaces }],
+    })
+    expect(useEditorStore.getState().revision).toBe(revision+1)
+    expect(useEditorStore.getState().objects[1].translationMm[0]).toBeCloseTo(50.8)
+    expect(useEditorStore.getState().snapFeedback).toBe('Faces and nearest edges aligned')
+    const dto = useEditorStore.getState().toSceneDto()
+    useEditorStore.getState().loadScene(dto)
+    expect(useEditorStore.getState().toSceneDto().objects).toEqual(dto.objects)
   })
 })

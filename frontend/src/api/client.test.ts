@@ -3,11 +3,13 @@ import {
   ApiError,
   captureCombinedExport,
   createPrintGroup,
+  createProject,
   deletePrintGroup,
   fetchAssetPreview,
   fetchAssets,
   fetchCombinedExportStatus,
   fetchPrintGroups,
+  fetchProjects,
   fetchScene,
   login,
   resetCsrfCache,
@@ -35,16 +37,16 @@ describe('api client', () => {
     const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
     fetchMock.mockResolvedValueOnce(
       jsonResponse([
-        { id: 'asset-a', processingStatus: 'READY' },
-        { id: 'asset-b', processingStatus: 'UPLOADED' },
+        { id: 'asset-a', processingStatus: 'READY', previewAvailable: true, originalFilename: 'a.stl' },
+        { id: 'asset-b', processingStatus: 'UPLOADED', previewAvailable: false, originalFilename: null },
       ]),
     )
 
     const assets = await fetchAssets()
 
     expect(assets).toEqual([
-      { id: 'asset-a', processingStatus: 'READY' },
-      { id: 'asset-b', processingStatus: 'UPLOADED' },
+      { id: 'asset-a', processingStatus: 'READY', previewAvailable: true, originalFilename: 'a.stl' },
+      { id: 'asset-b', processingStatus: 'UPLOADED', previewAvailable: false, originalFilename: null },
     ])
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(url).toBe('/api/assets')
@@ -101,10 +103,18 @@ describe('api client', () => {
     const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ token: 't', headerName: 'X-CSRF-TOKEN' }))
-      .mockResolvedValueOnce({ ok: false, status: 413 } as Response)
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 413,
+        json: async () => ({ code: 'FILE_TOO_LARGE', message: 'Uploaded file exceeds the maximum allowed size' }),
+      } as unknown as Response)
     const file = new File([new Uint8Array([1])], 'huge.stl')
 
-    await expect(uploadAsset(file)).rejects.toThrow('failed to upload asset')
+    await expect(uploadAsset(file)).rejects.toMatchObject({
+      status: 413,
+      code: 'FILE_TOO_LARGE',
+      message: 'Uploaded file exceeds the maximum allowed size',
+    })
   })
 
   it('attaches the server-provided csrf header to a mutating save request', async () => {
@@ -231,6 +241,58 @@ describe('api client', () => {
     expect(fetchMock.mock.calls[9]?.[0]).toBe('/api/combined-exports/export-1/status')
     fetchMock.mockResolvedValueOnce({ ok: false, status: 404 } as Response)
     await expect(fetchCombinedExportStatus('export-foreign')).rejects.toThrow('failed to fetch combined export status')
+  })
+
+  it('fetches the owner-scoped project list with same-origin credentials', async () => {
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse([
+        { id: 'project-1', name: 'My Project' },
+        { id: 'project-2', name: null },
+      ]),
+    )
+
+    const projects = await fetchProjects()
+
+    expect(projects).toEqual([
+      { id: 'project-1', name: 'My Project' },
+      { id: 'project-2', name: null },
+    ])
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('/api/projects')
+    expect(init.credentials).toBe('same-origin')
+  })
+
+  it('throws when the project list request is rejected (e.g. unauthenticated)', async () => {
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 401 } as Response)
+
+    await expect(fetchProjects()).rejects.toThrow('failed to fetch projects')
+  })
+
+  it('creates a project with the csrf header attached and returns the created project', async () => {
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ token: 'csrf-token-value', headerName: 'X-CSRF-TOKEN' }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'project-new', name: 'New Project' }))
+
+    const created = await createProject('New Project')
+
+    expect(created).toEqual({ id: 'project-new', name: 'New Project' })
+    const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit]
+    expect(url).toBe('/api/projects')
+    expect(init.method).toBe('POST')
+    expect(new Headers(init.headers).get('X-CSRF-TOKEN')).toBe('csrf-token-value')
+    expect(JSON.parse(init.body as string)).toEqual({ name: 'New Project' })
+  })
+
+  it('throws when project creation is rejected (e.g. blank name)', async () => {
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ token: 't', headerName: 'X-CSRF-TOKEN' }))
+      .mockResolvedValueOnce({ ok: false, status: 400 } as Response)
+
+    await expect(createProject('')).rejects.toThrow('failed to create project')
   })
 
   it('retries the csrf fetch on a later mutating request after an earlier csrf fetch failure', async () => {
