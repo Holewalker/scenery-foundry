@@ -209,11 +209,19 @@ const EditorObjectMesh = memo(function EditorObjectMesh({ object }: { object: Ed
       { label: 'Front', normal: [0, 0, 1] as Vec3, position: [center.x, center.y, bounds.max.z + 0.5] as Vec3, rotation: [0, 0, 0] as Vec3, dimensions: [size.x, size.y] as [number, number] },
       { label: 'Back', normal: [0, 0, -1] as Vec3, position: [center.x, center.y, bounds.min.z - 0.5] as Vec3, rotation: [Math.PI, 0, 0] as Vec3, dimensions: [size.x, size.y] as [number, number] },
     ]
+    const centeredZones = zones.map((zone) => ({
+      ...zone,
+      position: [
+        zone.position[0] - centered!.center[0],
+        zone.position[1] - centered!.center[1],
+        zone.position[2] - centered!.center[2],
+      ] as Vec3,
+    }))
     return (
       <group>
         {mesh}
         <group position={pivotPosition(object.translationMm, object.quaternionXyzw, object.scale, centered!.center)} quaternion={object.quaternionXyzw} scale={object.scale}>
-          {zones.map((zone) => (
+          {centeredZones.map((zone) => (
             <mesh key={zone.label} position={zone.position} rotation={zone.rotation} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); layFlatObject(object.id, { normal: zone.normal, boundsMin: bounds.min.toArray() as Vec3, boundsMax: bounds.max.toArray() as Vec3 }) }}>
               <planeGeometry args={zone.dimensions} />
               <meshBasicMaterial color="#62c6a8" transparent opacity={0.35} depthWrite={false} side={2} />
