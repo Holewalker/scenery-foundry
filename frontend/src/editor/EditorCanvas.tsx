@@ -189,13 +189,15 @@ const EditorObjectMesh = memo(function EditorObjectMesh({ object }: { object: Ed
       onPointerDown={handleDirectPointerDown}
       onPointerMove={handleDirectPointerMove}
       onPointerUp={handleDirectPointerUp}
+      onPointerCancel={cancelDirectDrag}
+      onLostPointerCapture={cancelDirectDrag}
     >
       <meshStandardMaterial color="#9b7358" roughness={0.88} metalness={0} />
     </mesh>
   )
 
-  if (selectedId !== object.id) return mesh
   if (layFlatMode) {
+    if (selectedId !== object.id) return mesh
     const bounds = geometry.boundingBox!
     const center = bounds.getCenter(new Vector3())
     const size = bounds.getSize(new Vector3())
@@ -210,7 +212,7 @@ const EditorObjectMesh = memo(function EditorObjectMesh({ object }: { object: Ed
     return (
       <group>
         {mesh}
-        <group position={object.translationMm} quaternion={object.quaternionXyzw} scale={object.scale}>
+        <group position={pivotPosition(object.translationMm, object.quaternionXyzw, object.scale, centered!.center)} quaternion={object.quaternionXyzw} scale={object.scale}>
           {zones.map((zone) => (
             <mesh key={zone.label} position={zone.position} rotation={zone.rotation} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); layFlatObject(object.id, { normal: zone.normal, boundsMin: bounds.min.toArray() as Vec3, boundsMax: bounds.max.toArray() as Vec3 }) }}>
               <planeGeometry args={zone.dimensions} />
@@ -281,6 +283,13 @@ const EditorObjectMesh = memo(function EditorObjectMesh({ object }: { object: Ed
     setDragging(false)
   }
 
+  function cancelDirectDrag(event: { pointerId: number }) {
+    if (!directDragRef.current || directDragRef.current.pointerId !== event.pointerId) return
+    directDragRef.current = null
+    setDragPreview(null)
+    setDragging(false)
+  }
+
   function handleLivePreview() {
     const target = meshRef.current
     if (!target) return
@@ -291,6 +300,8 @@ const EditorObjectMesh = memo(function EditorObjectMesh({ object }: { object: Ed
     <TransformControls
       object={meshRef}
       mode={mode}
+      enabled={selectedId === object.id}
+      visible={selectedId === object.id}
       axis={mode === 'translate' ? 'XZ' : undefined}
       onMouseDown={() => setDragging(true)}
       onObjectChange={handleLivePreview}

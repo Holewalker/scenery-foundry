@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { resetEditorStore, useEditorStore } from './store'
 import { TransformPanel } from './TransformPanel'
@@ -37,5 +37,13 @@ describe('TransformPanel', () => {
     expect(quaternion?.[1]).toBeCloseTo(Math.sin(Math.PI / 8), 8)
     fireEvent.change(screen.getByLabelText('Position Z (mm)'), { target: { value: 'not-a-number' } })
     expect(useEditorStore.getState().objects[0]?.translationMm).toEqual([0, 0, 0])
+  })
+
+  it('refreshes values when a drag or external commit changes the selected object', async () => {
+    const id = useEditorStore.getState().insert('asset-1')
+    render(<TransformPanel />)
+    useEditorStore.getState().setTranslation(id, [31, 32, 33])
+    await waitFor(() => expect(screen.getByLabelText('Position X (mm)')).toHaveValue(31))
+    expect(screen.getByLabelText('Position Y (mm)')).toHaveValue(32)
   })
 })

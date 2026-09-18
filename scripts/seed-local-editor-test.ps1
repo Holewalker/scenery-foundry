@@ -11,6 +11,10 @@ function Assert-Throws([scriptblock]$Action, [string]$Message) {
     if (-not $threw) { throw "$Message. Expected an error to be thrown." }
 }
 
+function Assert-Contains([string]$Text, [string]$Expected, [string]$Message) {
+    if (-not $Text.Contains($Expected)) { throw "$Message. Expected to find '$Expected'." }
+}
+
 $testRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("seed-local-editor-test-" + [guid]::NewGuid().ToString("N"))
 $seedDir = Join-Path $testRoot "seed"
 New-Item -ItemType Directory -Path $seedDir -Force | Out-Null
@@ -54,6 +58,14 @@ try {
 
     Assert-SeedOwnership -UserId $ownerId -ProjectId $projectId `
         -UserExistsLookup { param($id) $true } -ProjectOwnerLookup { param($id) $ownerId }
+
+    $seedScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'seed-local-editor.ps1') -Raw
+    Assert-Contains -Text $seedScript -Expected "processing_status='UPLOADED', geometry_status='UNKNOWN'" `
+        -Message "Same-owner seed upsert must reset processing and geometry status"
+    Assert-Contains -Text $seedScript -Expected "preview_storage_key=null, preview_sha256=null" `
+        -Message "Same-owner seed upsert must clear derived preview fields"
+    Assert-Contains -Text $seedScript -Expected "where assets.owner_id = excluded.owner_id" `
+        -Message "Seed upsert must preserve the owner guard"
 
     Assert-Throws -Action {
         Confirm-SeedAssetInserted -InsertedId "" -AssetId ([guid]::NewGuid())

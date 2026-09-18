@@ -40,7 +40,7 @@ export function TransformPanel() {
       positionX: String(object.translationMm[0]), positionY: String(object.translationMm[1]), positionZ: String(object.translationMm[2]),
       rotationX: String(Number(degrees[0].toFixed(4))), rotationY: String(Number(degrees[1].toFixed(4))), rotationZ: String(Number(degrees[2].toFixed(4))),
     })
-  }, [selectedId])
+  }, [selectedId, object?.translationMm.join(','), object?.quaternionXyzw.join(',')])
 
   function change(field: Field, value: string) {
     setValues((current) => ({ ...current, [field]: value }))

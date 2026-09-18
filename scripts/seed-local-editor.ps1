@@ -98,7 +98,8 @@ if ($MyInvocation.InvocationName -ne '.') {
     $originalFilename = (Split-Path -Leaf $resolved.StorageKey) -replace "'", "''"
     $insertedId = Invoke-SeedPsql $ComposeProjectName ("insert into assets(id,owner_id,processing_status,geometry_status,storage_key,original_sha256,original_filename) values " +
         "('$AssetId','$UserId','UPLOADED','UNKNOWN','$($resolved.StorageKey)','$sha','$originalFilename') " +
-        "on conflict (id) do update set storage_key=excluded.storage_key, original_sha256=excluded.original_sha256, original_filename=excluded.original_filename " +
+        "on conflict (id) do update set processing_status='UPLOADED', geometry_status='UNKNOWN', storage_key=excluded.storage_key, original_sha256=excluded.original_sha256, original_filename=excluded.original_filename, " +
+        "preview_storage_key=null, preview_sha256=null, triangle_count=null, bounds_min=null, bounds_max=null, volume_mm3=null, geometry_policy_version=null, diagnostic_report=null, error_code=null " +
         "where assets.owner_id = excluded.owner_id " +
         "returning id")
     Confirm-SeedAssetInserted -InsertedId $insertedId -AssetId $AssetId | Out-Null

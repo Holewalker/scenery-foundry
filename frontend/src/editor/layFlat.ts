@@ -40,6 +40,8 @@ export function supportNormalFromGeometry(
   const b = new Vector3()
   const c = new Vector3()
   const candidate = new Vector3()
+  const edge = new Vector3()
+  const cross = new Vector3()
   const cosTolerance = Math.cos((15 * Math.PI) / 180)
   for (let triangle = 0; triangle < triangleCount; triangle += 1) {
     const read = (offset: number) => index ? index.getX(triangle * 3 + offset) : triangle * 3 + offset
@@ -47,7 +49,7 @@ export function supportNormalFromGeometry(
     b.fromBufferAttribute(positions, read(1))
     c.fromBufferAttribute(positions, read(2))
     Triangle.getNormal(a, b, c, candidate)
-    const area = new Vector3().subVectors(b, a).cross(new Vector3().subVectors(c, a)).length() / 2
+    const area = cross.subVectors(b, a).cross(edge.subVectors(c, a)).length() / 2
     if (area > Number.EPSILON && candidate.dot(clicked) >= cosTolerance) normal.addScaledVector(candidate, area)
   }
   return normal.lengthSq() > Number.EPSILON ? normal.normalize() : clicked
